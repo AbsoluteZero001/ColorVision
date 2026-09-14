@@ -298,7 +298,6 @@ class CameraService:
         self._name: str | None = None
         self._message = "Camera service is initializing"
         self._code: str | None = None
-        self._detected_indices: set[int] = set()
         self._camera_id_provider = camera_id_provider
         self._lock = threading.RLock()
 
@@ -311,7 +310,6 @@ class CameraService:
         """Probe a bounded index range without assuming camera zero exists."""
         with self._lock:
             cameras = self._scan_cameras_unlocked()
-            self._detected_indices = {camera.index for camera in cameras}
             logger.info(
                 "Camera scan completed: %d device(s) available",
                 len(cameras),
@@ -327,7 +325,6 @@ class CameraService:
                 message="Detecting camera devices",
             )
             cameras = self._scan_cameras_unlocked()
-            self._detected_indices = {camera.index for camera in cameras}
             if not cameras:
                 logger.warning("No camera device detected")
                 self._set_state(
@@ -350,7 +347,6 @@ class CameraService:
                 message="Initializing camera",
             )
             cameras = self._scan_cameras_unlocked()
-            self._detected_indices = {camera.index for camera in cameras}
 
             if not cameras:
                 logger.warning("No camera device detected")
