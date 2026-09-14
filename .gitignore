@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Vite
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Runtime data
+data/captures/*
+!data/captures/.gitkeep
+data/results/*
+!data/results/.gitkeep
+data/logs/*
+!data/logs/.gitkeep
+
+# Build outputs
+build/*
+!build/.gitkeep
+dist/
+
+# Local editors and environment
+.idea/
+.vscode/
+.env
+.env.*
+!.env.example
+
+# OS
+Thumbs.db
+Desktop.ini
