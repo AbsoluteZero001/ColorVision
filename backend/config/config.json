@@ -4,5 +4,6 @@
   "camera_id": "CAM-001",
   "auto_upload": false,
   "mock_mode": true,
-  "request_timeout_seconds": 10.0
+  "timeout": 10.0,
+  "port": 8000
 }

@@ -118,7 +118,7 @@ class UploadService:
             ),
         }
 
-        timeout = httpx.Timeout(config_data.request_timeout_seconds)
+        timeout = httpx.Timeout(config_data.timeout)
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(

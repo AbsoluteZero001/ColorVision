@@ -12,22 +12,24 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import __version__
-from backend.api import camera, color, config, health, upload
+from backend.api import camera, color, config, health, system, upload
 from backend.models.common import ApiResponse, ErrorCode, ErrorResponse
 from backend.services.camera_service import get_camera_service
 from backend.services.config_service import get_config_service
 from backend.utils.errors import AppException
 from backend.utils.logging_utils import setup_logging
-from backend.utils.paths import get_data_directory
+from backend.utils.paths import (
+    ensure_runtime_directories,
+    get_frontend_dist_directory,
+)
 
 APP_NAME = "ColorVision"
 
@@ -77,11 +79,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-data_directory = get_data_directory()
-captures_directory = data_directory / "captures"
-results_directory = data_directory / "results"
-captures_directory.mkdir(parents=True, exist_ok=True)
-results_directory.mkdir(parents=True, exist_ok=True)
+captures_directory, results_directory, _ = ensure_runtime_directories()
 app.mount(
     "/media/captures",
     StaticFiles(directory=captures_directory),
@@ -133,34 +131,65 @@ async def unexpected_exception_handler(_: Request, exc: Exception) -> JSONRespon
     return JSONResponse(status_code=500, content=payload.model_dump())
 
 
-@app.get("/", response_model=ApiResponse[dict[str, str]], tags=["system"])
-async def root() -> ApiResponse[dict[str, str]]:
-    """Expose a small discovery response for local integrations."""
-    return ApiResponse(
-        data={
-            "name": APP_NAME,
-            "version": __version__,
-            "docs": "/docs",
-        }
-    )
-
-
 api_prefix = "/api"
 app.include_router(health.router, prefix=api_prefix)
+app.include_router(system.router, prefix=api_prefix)
 app.include_router(camera.router, prefix=api_prefix)
 app.include_router(color.router, prefix=api_prefix)
 app.include_router(upload.router, prefix=api_prefix)
 app.include_router(config.router, prefix=api_prefix)
 
+frontend_dist = get_frontend_dist_directory()
+frontend_index = frontend_dist / "index.html"
+
+if frontend_index.is_file():
+    frontend_assets = frontend_dist / "assets"
+    if frontend_assets.is_dir():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=frontend_assets),
+            name="frontend-assets",
+        )
+
+    @app.get("/", include_in_schema=False)
+    async def serve_frontend() -> FileResponse:
+        return FileResponse(frontend_index)
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_frontend_fallback(full_path: str) -> FileResponse:
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API route not found")
+
+        resolved_root = frontend_dist.resolve()
+        candidate = (frontend_dist / full_path).resolve()
+        try:
+            candidate.relative_to(resolved_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="File not found") from exc
+
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(frontend_index)
+
+else:
+
+    @app.get("/", response_model=ApiResponse[dict[str, str]], tags=["system"])
+    async def root() -> ApiResponse[dict[str, str]]:
+        """Expose API discovery when the Vue production bundle is absent."""
+        return ApiResponse(
+            data={
+                "name": APP_NAME,
+                "version": __version__,
+                "docs": "/docs",
+            }
+        )
+
 
 def run() -> None:
-    """Run the local service for direct and future packaged execution."""
-    uvicorn.run(
-        "backend.main:app",
-        host="127.0.0.1",
-        port=8000,
-        reload=False,
-    )
+    """Run the managed local service used by both Python and EXE launches."""
+    from backend.launcher import main
+
+    raise SystemExit(main())
 
 
 if __name__ == "__main__":

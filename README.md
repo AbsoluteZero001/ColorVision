@@ -1,106 +1,60 @@
-# ColorVision
+# ColorVision 1.1
 
-ColorVision 是运行在 Windows 本机的颜色采集与识别软件。V1 MVP 已实现完整业务闭环：
+ColorVision 是运行在 Windows 本机的颜色采集与识别系统。V1.1 提供可交付的 onedir EXE，
+最终用户不需要安装 Python、Node.js 或 npm。
+
+完整流程：
 
 ```text
-摄像头 -> MJPEG 实时画面 -> 拍照 -> ROI 框选
-      -> RGB/LAB/HEX -> 前端显示 -> Mock/真实 API 上传
+双击 ColorVision.exe
+  -> 启动本地 FastAPI
+  -> 托管 Vue 生产页面
+  -> 自动打开默认浏览器
+  -> 摄像头实时画面
+  -> 拍照与 ROI 框选
+  -> RGB / LAB / HEX
+  -> Mock 或真实 API 上传
 ```
 
-## 已实现功能
+## EXE 使用
 
-- OpenCV 枚举、打开、关闭和读取本机摄像头
-- FastAPI 提供浏览器可播放的 MJPEG 实时画面
-- 从当前摄像头拍照并保存到 `data/captures/`
-- 通过 `/media` 静态地址预览已拍摄图片
-- 在拍摄原图上拖动绘制 ROI
-- 将浏览器显示坐标按比例换算成原图像素坐标
-- ROI 像素中位数统计，并排除少量过暗和过亮像素
-- 输出 RGB、标准 CIELAB 和 `#RRGGBB`
-- 复制 HEX、重新拍摄和错误提示
-- Mock 上传模式，不依赖外部服务器
-- 真实 API multipart 上传，支持 Token、超时和错误映射
-- JSON 配置读取、修改和持久化
-- 文件日志与统一 API 错误响应
+发布目录：
 
-## 环境要求
-
-- Windows 10/11
-- Python 3.11 或更高版本
-- Node.js 20.19 或更高版本
-- npm 10 或更高版本
-
-## 安装
-
-项目根目录执行：
-
-```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+```text
+dist/ColorVision/
+├── ColorVision.exe
+├── README.md
+└── _internal/
 ```
 
-安装前端依赖：
+使用步骤：
 
-```powershell
-Set-Location .\frontend
-npm install
-Set-Location ..
+1. 保持整个 `ColorVision` 目录完整，不要只复制 EXE。
+2. 双击 `ColorVision.exe`。
+3. 等待默认浏览器自动打开 `http://127.0.0.1:8000/`。
+4. 系统会自动检测并打开第一台可用摄像头。
+5. 点击“拍照”，在图片上拖动 ROI。
+6. 点击“识别颜色”，查看 RGB、LAB 和 HEX。
+7. 点击“上传服务器”完成 Mock 或真实 API 上传。
+8. 在“设置”页面点击“退出 ColorVision”可正确释放摄像头并关闭服务。
+
+重复双击 EXE 时，程序会检测现有服务并提示 ColorVision 已经在运行。
+
+## 首次运行目录
+
+第一次运行会在 EXE 同级生成：
+
+```text
+ColorVision/
+├── config/
+│   └── config.json
+└── data/
+    ├── captures/
+    ├── results/
+    └── logs/
 ```
 
-如果 PowerShell 禁止执行本地脚本：
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-```
-
-## 启动
-
-### 一键启动
-
-```powershell
-.\scripts\dev.ps1
-```
-
-后端地址：`http://127.0.0.1:8000`
-
-前端地址：`http://127.0.0.1:5173`
-
-Swagger：`http://127.0.0.1:8000/docs`
-
-### 分别启动
-
-后端：
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
-```
-
-前端：
-
-```powershell
-Set-Location .\frontend
-npm run dev
-```
-
-## 页面操作
-
-1. 打开前端后，系统会自动探测并打开第一台可用摄像头。
-2. 实时画面显示后点击“拍照”。
-3. 在右侧或下方冻结的拍摄图片上按住鼠标左键拖动。
-4. 调整到目标区域后点击“识别颜色”。
-5. 查看颜色预览、RGB、LAB 和 HEX。
-6. 点击“上传服务器”，或先在设置中启用“自动上传”。
-7. Mock 模式会在页面显示上传成功和 `request_id`。
-
-浏览器不会直接访问 OpenCV 摄像头对象。所有实时画面由后端编码为 JPEG，再通过
-`GET /api/camera/stream` 作为 MJPEG 响应提供给 `<img>`。
-
-## 配置
-
-配置文件：`backend/config/config.json`
+默认配置：
 
 ```json
 {
@@ -109,144 +63,251 @@ npm run dev
   "camera_id": "CAM-001",
   "auto_upload": false,
   "mock_mode": true,
-  "request_timeout_seconds": 10.0
+  "timeout": 10.0,
+  "port": 8000
 }
 ```
 
-设置页可以修改以上参数。也可以调用配置 API：
+配置说明：
 
-```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/config" -Method Get
+- `api_url`：真实上传 API 地址。
+- `token`：以 `Authorization: Bearer <token>` 发送，可为空。
+- `camera_id`：上传数据中的设备标识。
+- `auto_upload`：颜色识别完成后自动上传。
+- `mock_mode`：`true` 时不访问外部服务器。
+- `timeout`：外部 API 超时时间，单位秒。
+- `port`：本地服务端口，修改后需要重启 EXE。
 
-$body = @{
-    api_url = "http://127.0.0.1:9000/api/color"
-    token = ""
-    camera_id = "CAM-001"
-    auto_upload = $false
-    mock_mode = $true
-    request_timeout_seconds = 10
-} | ConvertTo-Json
-
-Invoke-RestMethod `
-    -Uri "http://127.0.0.1:8000/api/config" `
-    -Method Put `
-    -ContentType "application/json" `
-    -Body $body
-```
-
-`mock_mode=true` 时上传在本地完成。将其关闭后，后端会向 `api_url` 发送真实 multipart
-请求，并在配置了 Token 时添加 `Authorization: Bearer <token>`。
-
-打包运行后，可编辑配置会放在 EXE 同级的 `config/config.json`。也可用环境变量覆盖位置：
+也可以使用环境变量指定其他配置文件：
 
 ```powershell
 $env:COLORVISION_CONFIG = "D:\ColorVisionData\config.json"
 ```
 
-## 上传字段
+## Mock 与真实 API
 
-`POST /api/upload` 接收：
+Mock 模式：
 
-- `original_image`：原始拍摄图片
-- `roi_image`：前端裁剪后的 ROI 图片
-- `rgb`：JSON 对象
-- `lab`：JSON 对象
-- `hex`：`#RRGGBB`
-- `roi`：`x/y/width/height` JSON 对象
-- `camera_id`：设备标识
-- `timestamp`：拍摄时间
+```json
+{
+  "mock_mode": true
+}
+```
 
-Mock 成功响应示例：
+页面会显示类似：
 
 ```json
 {
   "success": true,
-  "data": {
-    "success": true,
-    "message": "Mock upload success",
-    "request_id": "MOCK-20260914-0001",
-    "mode": "mock"
-  }
+  "message": "Mock upload success",
+  "request_id": "MOCK-20260914-0001"
 }
 ```
 
-## API 概览
-
-| 方法 | 路径 | 功能 |
-| --- | --- | --- |
-| GET | `/api/health` | 服务健康状态 |
-| GET | `/api/config` | 读取本地配置 |
-| PUT | `/api/config` | 修改本地配置 |
-| GET | `/api/camera/list` | 枚举摄像头 |
-| GET | `/api/camera/status` | 查询摄像头状态 |
-| POST | `/api/camera/open` | 打开指定摄像头 |
-| POST | `/api/camera/close` | 关闭摄像头 |
-| GET | `/api/camera/stream` | MJPEG 实时画面 |
-| POST | `/api/camera/capture` | 拍照并保存 |
-| POST | `/api/color/analyze` | ROI 颜色分析 |
-| POST | `/api/upload` | Mock 或真实 API 上传 |
-
-成功响应统一使用：
+真实 API 模式：
 
 ```json
 {
-  "success": true,
-  "data": {}
+  "api_url": "http://your-server/api/color",
+  "token": "your-token",
+  "mock_mode": false,
+  "timeout": 10
 }
 ```
 
-失败响应统一使用：
+上传使用 `multipart/form-data`，包含：
 
-```json
-{
-  "success": false,
-  "message": "Camera is not open",
-  "code": "CAMERA_CLOSED"
-}
+- `original_image`
+- `roi_image`
+- `rgb`
+- `lab`
+- `hex`
+- `roi`
+- `camera_id`
+- `timestamp`
+
+后端会处理超时、HTTP 状态码、无效 JSON 和网络异常。
+
+## 日志
+
+日志位置：
+
+```text
+data/logs/colorvision.log
 ```
 
-## 颜色计算
+日志包含：
 
-`ColorService` 接收 OpenCV BGR 图像：
+- 服务启动与停止
+- 摄像头扫描、打开与关闭
+- 拍照文件保存
+- ROI 颜色分析
+- Mock 或真实 API 上传
+- 配置迁移与错误
+- 未处理异常
 
-1. 将 BGR 正确转换为 RGB。
-2. 计算 ROI 内像素亮度。
-3. 在有效像素比例足够时排除过暗与过亮像素。
-4. 对剩余像素按通道取中位数，避免单个坏点影响结果。
-5. 使用 OpenCV 标准转换计算 LAB。
-6. 将 8-bit OpenCV LAB 规范化：
-   - `L = 原始 L * 100 / 255`
-   - `a = 原始 a - 128`
-   - `b = 原始 b - 128`
-7. 生成大写 `#RRGGBB`。
+EXE 为无控制台窗口模式，正常运行不会持续弹出控制台日志。
 
-## 构建
+## 开发模式
 
-前端类型检查与生产构建：
+### 安装
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+
+Set-Location .\frontend
+npm install
+Set-Location ..
+```
+
+### 启动
+
+同时启动 FastAPI 和 Vite：
+
+```powershell
+.\scripts\dev.ps1
+```
+
+也可以使用生产式统一入口：
+
+```powershell
+python backend/main.py
+```
+
+该入口默认绑定 `127.0.0.1:8000`，不使用 `--reload`，并直接托管
+`frontend/dist`。
+
+开发接口文档：
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+Vite 开发服务器仍可用于前端热更新：
+
+```powershell
+Set-Location .\frontend
+npm run dev
+```
+
+开发服务器地址为 `http://127.0.0.1:5173`。这是唯一仍使用 5173 的场景。
+
+## 自动化测试
+
+运行全部测试、真实摄像头测试和前端生产构建：
+
+```powershell
+.\scripts\test.ps1
+```
+
+跳过摄像头：
+
+```powershell
+.\scripts\test.ps1 -SkipCamera
+```
+
+测试覆盖：
+
+- 健康检查、Swagger 和 Vue 托管
+- 纯红、纯绿、纯蓝、白色、黑色
+- RGB、LAB、HEX 范围与通道顺序
+- ROI 零尺寸和越界校验
+- 配置默认值、持久化和旧字段迁移
+- Mock 上传响应
+- 真实摄像头拍照、存储与静态预览
+
+## 构建 EXE
+
+```powershell
+.\scripts\build.ps1
+```
+
+构建流程：
+
+1. 执行 Vue TypeScript 检查和 `npm run build`。
+2. 使用 `colorvision.spec` 收集后端、OpenCV、Python 依赖和 Vue 资源。
+3. 生成 PyInstaller onedir 目录。
+4. 将 README 复制到发布目录。
+
+输出：
+
+```text
+dist/ColorVision/ColorVision.exe
+```
+
+只构建前端：
 
 ```powershell
 .\scripts\build.ps1 -FrontendOnly
 ```
 
-构建输出位于 `frontend/dist/`。
+项目使用 onedir，不使用 onefile。稳定性优先于单文件体积。
 
-PyInstaller 打包尚未完成。`scripts/build.ps1` 已预留调用入口，后续需要增加
-`colorvision.spec`、前端静态资源收集和 EXE 启动逻辑。
+## API 概览
+
+| 方法 | 路径 | 功能 |
+| --- | --- | --- |
+| GET | `/api/health` | 健康状态 |
+| GET、PUT | `/api/config` | 读取或保存配置 |
+| GET | `/api/camera/list` | 枚举摄像头 |
+| GET | `/api/camera/status` | 摄像头状态 |
+| POST | `/api/camera/open` | 打开摄像头 |
+| POST | `/api/camera/close` | 关闭摄像头 |
+| GET | `/api/camera/stream` | MJPEG 实时画面 |
+| POST | `/api/camera/capture` | 拍照 |
+| POST | `/api/color/analyze` | ROI 颜色分析 |
+| POST | `/api/upload` | Mock 或真实上传 |
+| POST | `/api/system/shutdown` | 托管模式优雅退出 |
+
+## 摄像头故障排查
+
+1. 关闭 Windows 相机、Teams、Zoom、浏览器会议等可能占用摄像头的程序。
+2. 检查 Windows 设置中的“隐私和安全性 -> 相机”权限。
+3. 重新插拔 USB 摄像头。
+4. 确认没有重复运行的 `ColorVision.exe`。
+5. 查看 `data/logs/colorvision.log` 中的摄像头错误。
+6. 使用 Windows“相机”应用确认设备本身可以工作。
+
+当前版本只允许一台进程打开一台摄像头。不同时支持多摄像头并发采集。
+
+## 常见错误
+
+`CAMERA_OPEN_FAILED`：
+
+摄像头不存在、驱动不可用，或者已被其他程序占用。
+
+`CAPTURE_FAILED`：
+
+摄像头已连接，但当前帧读取失败。重新打开摄像头或重新插拔设备。
+
+`INVALID_ROI`：
+
+ROI 宽高为 0，或者选区超出原图范围。
+
+`IMAGE_READ_FAILED`：
+
+上传图片为空、格式不支持或超过 25 MB。
+
+`API_TIMEOUT`：
+
+外部 API 在配置的 `timeout` 时间内未响应。
+
+`API_REQUEST_FAILED`：
+
+外部 API 网络失败、返回非 2xx，或返回了无效 JSON。
+
+`端口已被其他程序占用`：
+
+关闭占用端口的程序，或者修改 `config/config.json` 中的 `port` 后重启。
 
 ## 已知限制
 
-- 当前进程同一时间只维护一台已打开摄像头。
-- 摄像头枚举使用有限索引扫描，不读取 Windows 设备友好名称。
-- MJPEG 默认约 15 FPS，网络较慢时可能略低。
-- 颜色算法使用鲁棒中位数，不包含光照校正、白平衡或色彩校准。
-- 真实外部 API 的字段兼容性由接收服务决定。
-- Token 保存在本机 JSON 文件中，尚未接入 Windows 凭据管理器。
-- 当前尚未生成最终 EXE。
-
-## 后续建议
-
-1. 增加自动化测试套件和 CI。
-2. 增加相机分辨率、曝光和白平衡控制。
-3. 增加色彩标定卡和校准流程。
-4. 增加 ROI 区域的局部放大与多区域比较。
-5. 在 V1 稳定后，再接入目标检测、自动分割或跟踪服务。
+- 当前为 onedir 版本，必须保留整个发布目录。
+- 摄像头枚举不读取厂商友好名称。
+- 同一时间只管理一台摄像头。
+- 颜色算法尚未进行专业色卡和白平衡校准。
+- Token 以明文保存在本机 JSON 配置中。
+- 当前未加入 AI 目标检测、分割、跟踪或自动布料识别。

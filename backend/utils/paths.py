@@ -42,6 +42,11 @@ def get_bundled_config_path() -> Path:
     return get_resource_root() / "backend" / "config" / "config.json"
 
 
+def get_frontend_dist_directory() -> Path:
+    """Return the built Vue application directory."""
+    return get_resource_root() / "frontend" / "dist"
+
+
 def get_data_directory() -> Path:
     """Return the root for runtime-generated data."""
     return get_project_root() / "data"
@@ -50,3 +55,18 @@ def get_data_directory() -> Path:
 def get_logs_directory() -> Path:
     """Return the log output directory."""
     return get_data_directory() / "logs"
+
+
+def ensure_runtime_directories() -> tuple[Path, Path, Path]:
+    """Create writable runtime directories and return captures/results/logs."""
+    data_directory = get_data_directory()
+    captures_directory = data_directory / "captures"
+    results_directory = data_directory / "results"
+    logs_directory = data_directory / "logs"
+    for directory in (
+        captures_directory,
+        results_directory,
+        logs_directory,
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+    return captures_directory, results_directory, logs_directory

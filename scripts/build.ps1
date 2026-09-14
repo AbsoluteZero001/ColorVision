@@ -41,3 +41,18 @@ if (-not (Test-Path -LiteralPath $Python)) {
 if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller build failed."
 }
+
+$ExecutablePath = Join-Path $ProjectRoot "dist\ColorVision\ColorVision.exe"
+if (-not (Test-Path -LiteralPath $ExecutablePath)) {
+    throw "PyInstaller completed without producing ColorVision.exe."
+}
+
+$Executable = Get-Item -LiteralPath $ExecutablePath
+$SizeMb = [Math]::Round($Executable.Length / 1MB, 2)
+$ReadmePath = Join-Path $ProjectRoot "README.md"
+$OutputRoot = Join-Path $ProjectRoot "dist\ColorVision"
+if (Test-Path -LiteralPath $ReadmePath) {
+    Copy-Item -LiteralPath $ReadmePath -Destination (Join-Path $OutputRoot "README.md") -Force
+}
+Write-Host "ColorVision EXE: $($Executable.FullName)"
+Write-Host "ColorVision EXE size: $SizeMb MB"

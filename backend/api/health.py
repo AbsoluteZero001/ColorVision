@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict
 
 from backend import __version__
 from backend.models.common import ApiResponse
+from backend.runtime import is_managed_runtime
 from backend.services.config_service import get_config_service
 
 router = APIRouter(prefix="/health", tags=["system"])
@@ -19,6 +20,7 @@ class HealthData(BaseModel):
     app: str
     version: str
     mock_mode: bool
+    managed_runtime: bool
 
 
 @router.get("", response_model=ApiResponse[HealthData])
@@ -31,5 +33,6 @@ async def get_health() -> ApiResponse[HealthData]:
             app="ColorVision",
             version=__version__,
             mock_mode=config_data.mock_mode,
+            managed_runtime=is_managed_runtime(),
         )
     )

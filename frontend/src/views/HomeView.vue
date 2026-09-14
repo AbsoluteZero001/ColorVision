@@ -133,7 +133,7 @@ async function handleUpload(): Promise<void> {
       result: colorResult.value,
       cameraId: config.value.camera_id,
       timestamp: capture.value.captured_at,
-      timeoutMs: config.value.request_timeout_seconds * 1000 + 2_000,
+      timeoutMs: config.value.timeout * 1000 + 2_000,
     });
   } catch (error) {
     uploadState.value = null;

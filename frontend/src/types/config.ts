@@ -4,7 +4,8 @@ export interface AppConfig {
   camera_id: string;
   auto_upload: boolean;
   mock_mode: boolean;
-  request_timeout_seconds: number;
+  timeout: number;
+  port: number;
 }
 
 export type AppConfigUpdate = Partial<AppConfig>;
@@ -14,4 +15,5 @@ export interface HealthStatus {
   app: string;
   version: string;
   mock_mode: boolean;
+  managed_runtime: boolean;
 }

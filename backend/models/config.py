@@ -15,7 +15,8 @@ class AppConfig(BaseModel):
     camera_id: str = "CAM-001"
     auto_upload: bool = False
     mock_mode: bool = True
-    request_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
+    timeout: float = Field(default=10.0, gt=0, le=120)
+    port: int = Field(default=8000, ge=1, le=65535)
 
     @field_validator("api_url")
     @classmethod
@@ -44,7 +45,8 @@ class AppConfigUpdate(BaseModel):
     camera_id: str | None = None
     auto_upload: bool | None = None
     mock_mode: bool | None = None
-    request_timeout_seconds: float | None = Field(default=None, gt=0, le=120)
+    timeout: float | None = Field(default=None, gt=0, le=120)
+    port: int | None = Field(default=None, ge=1, le=65535)
 
     @field_validator("api_url")
     @classmethod

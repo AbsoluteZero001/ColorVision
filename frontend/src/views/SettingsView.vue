@@ -3,7 +3,7 @@ import { onMounted, reactive, ref } from "vue";
 
 import { apiClient, getApiErrorMessage } from "@/services/api";
 import type { ApiResponse } from "@/types/api";
-import type { AppConfig } from "@/types/config";
+import type { AppConfig, HealthStatus } from "@/types/config";
 
 const form = reactive<AppConfig>({
   api_url: "",
@@ -11,25 +11,45 @@ const form = reactive<AppConfig>({
   camera_id: "",
   auto_upload: false,
   mock_mode: true,
-  request_timeout_seconds: 10,
+  timeout: 10,
+  port: 8000,
 });
 
 const loading = ref(true);
 const saving = ref(false);
+const shuttingDown = ref(false);
+const managedRuntime = ref(false);
 const message = ref("");
 const messageType = ref<"success" | "error">("success");
 
 async function loadConfig(): Promise<void> {
   loading.value = true;
   try {
-    const response =
-      await apiClient.get<ApiResponse<AppConfig>>("/config");
-    Object.assign(form, response.data.data);
+    const [configResponse, healthResponse] = await Promise.all([
+      apiClient.get<ApiResponse<AppConfig>>("/config"),
+      apiClient.get<ApiResponse<HealthStatus>>("/health"),
+    ]);
+    Object.assign(form, configResponse.data.data);
+    managedRuntime.value = healthResponse.data.data.managed_runtime;
   } catch (error) {
     messageType.value = "error";
     message.value = getApiErrorMessage(error);
   } finally {
     loading.value = false;
+  }
+}
+
+async function shutdownApplication(): Promise<void> {
+  shuttingDown.value = true;
+  message.value = "";
+  try {
+    await apiClient.post("/system/shutdown");
+    messageType.value = "success";
+    message.value = "ColorVision 正在退出";
+  } catch (error) {
+    messageType.value = "error";
+    message.value = getApiErrorMessage(error);
+    shuttingDown.value = false;
   }
 }
 
@@ -102,11 +122,24 @@ onMounted(loadConfig);
         <label class="field">
           <span>API 超时（秒）</span>
           <input
-            v-model.number="form.request_timeout_seconds"
+            v-model.number="form.timeout"
             type="number"
             min="0.1"
             max="120"
             step="0.1"
+            required
+            :disabled="loading || saving"
+          />
+        </label>
+
+        <label class="field">
+          <span>服务端口</span>
+          <input
+            v-model.number="form.port"
+            type="number"
+            min="1"
+            max="65535"
+            step="1"
             required
             :disabled="loading || saving"
           />
@@ -146,9 +179,24 @@ onMounted(loadConfig);
         >
           {{ message }}
         </p>
-        <button class="button" type="submit" :disabled="loading || saving">
-          {{ saving ? "保存中" : "保存配置" }}
-        </button>
+        <div class="settings-actions">
+          <button
+            v-if="managedRuntime"
+            class="button secondary"
+            type="button"
+            :disabled="shuttingDown"
+            @click="shutdownApplication"
+          >
+            {{ shuttingDown ? "正在退出" : "退出 ColorVision" }}
+          </button>
+          <button
+            class="button"
+            type="submit"
+            :disabled="loading || saving || shuttingDown"
+          >
+            {{ saving ? "保存中" : "保存配置" }}
+          </button>
+        </div>
       </div>
     </form>
   </div>
@@ -241,6 +289,12 @@ onMounted(loadConfig);
   border-top: 1px solid var(--border);
 }
 
+.settings-actions {
+  display: flex;
+  gap: 10px;
+  margin-left: auto;
+}
+
 .form-message {
   margin: 0;
   font-size: 0.88rem;
@@ -261,6 +315,19 @@ onMounted(loadConfig);
 
   .field-wide {
     grid-column: 1;
+  }
+
+  .settings-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-actions {
+    margin-left: 0;
+  }
+
+  .settings-actions .button {
+    flex: 1;
   }
 }
 </style>
