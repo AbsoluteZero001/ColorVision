@@ -44,6 +44,45 @@ class ColorServiceTests(unittest.TestCase):
                 self.assertGreaterEqual(measured_lab[2], -128.0)
                 self.assertLessEqual(measured_lab[2], 127.0)
 
+    def test_lab_matches_standard_srgb_d65_reference_values(self) -> None:
+        cases = {
+            (255, 0, 0): (53.24, 80.09, 67.20),
+            (0, 255, 0): (87.74, -86.18, 83.18),
+            (0, 0, 255): (32.30, 79.19, -107.86),
+            (255, 255, 255): (100.0, 0.0, 0.0),
+        }
+
+        for rgb, expected_lab in cases.items():
+            with self.subTest(rgb=rgb):
+                measured_lab = self.service.calculate_lab(rgb)
+                for measured, expected in zip(
+                    measured_lab,
+                    expected_lab,
+                    strict=True,
+                ):
+                    self.assertAlmostEqual(measured, expected, delta=0.2)
+
+    def test_robust_sampling_ignores_local_highlights(self) -> None:
+        rng = np.random.default_rng(20260914)
+        red, green, blue = 120, 80, 40
+        rgb_roi = np.empty((80, 120, 3), dtype=np.float64)
+        rgb_roi[:, :, 0] = red
+        rgb_roi[:, :, 1] = green
+        rgb_roi[:, :, 2] = blue
+        rgb_roi += rng.normal(0.0, 1.5, rgb_roi.shape)
+        rgb_roi[:10, :10] = 235.0
+        bgr_roi = np.clip(
+            rgb_roi[:, :, ::-1],
+            0,
+            255,
+        ).astype(np.uint8)
+
+        measured_rgb = self.service.calculate_rgb(bgr_roi)
+
+        self.assertAlmostEqual(measured_rgb[0], red, delta=1.0)
+        self.assertAlmostEqual(measured_rgb[1], green, delta=1.0)
+        self.assertAlmostEqual(measured_rgb[2], blue, delta=1.0)
+
     def test_roi_out_of_bounds_is_rejected(self) -> None:
         image = np.zeros((80, 120, 3), dtype=np.uint8)
         with self.assertRaises(AppException) as context:

@@ -11,7 +11,7 @@ _shutdown_event = threading.Event()
 
 
 def set_managed_runtime(enabled: bool = True) -> None:
-    """Mark this process as running under the ColorVision launcher."""
+    """Mark this process as running under the application launcher."""
     if enabled:
         os.environ[MANAGED_RUNTIME_ENV] = "1"
     else:

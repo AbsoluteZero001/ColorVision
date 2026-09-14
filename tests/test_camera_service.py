@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+import cv2
 import numpy as np
 
 from backend.models.camera import CameraInfo, CameraState
@@ -186,10 +187,80 @@ class CameraServiceTests(unittest.TestCase):
         self.assertEqual(source.get_status().height, 720)
         source.stop()
 
+    def test_camera_reports_actual_supported_resolution(self) -> None:
+        for width, height in ((640, 480), (1280, 720), (1920, 1080)):
+            with self.subTest(width=width, height=height):
+                frame = np.full((height, width, 3), 80, dtype=np.uint8)
+                capture = FakeCapture(
+                    [(True, frame)] * FRAME_VALIDATION_COUNT
+                )
+                source = RealCameraSource(0)
+
+                with patch.object(
+                    RealCameraSource,
+                    "_create_capture",
+                    return_value=capture,
+                ):
+                    source.start()
+
+                self.assertTrue(source.is_available())
+                self.assertEqual(source.get_status().width, width)
+                self.assertEqual(source.get_status().height, height)
+                source.stop()
+
+    def test_windows_capture_uses_dshow_then_msmf(self) -> None:
+        dshow_capture = FakeCapture([])
+        dshow_capture.opened = False
+        msmf_capture = FakeCapture([])
+
+        with (
+            patch(
+                "backend.services.camera_service.platform.system",
+                return_value="Windows",
+            ),
+            patch(
+                "backend.services.camera_service.cv2.VideoCapture",
+                side_effect=[dshow_capture, msmf_capture],
+            ) as video_capture,
+        ):
+            selected = RealCameraSource._create_capture(0)
+
+        self.assertIs(selected, msmf_capture)
+        self.assertTrue(dshow_capture.released)
+        self.assertEqual(
+            video_capture.call_args_list[0].args,
+            (0, cv2.CAP_DSHOW),
+        )
+        self.assertEqual(
+            video_capture.call_args_list[1].args,
+            (0, cv2.CAP_MSMF),
+        )
+
     def test_consecutive_black_frames_are_not_available(self) -> None:
         black_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
         capture = FakeCapture(
             [(True, black_frame)] * FRAME_VALIDATION_ATTEMPTS
+        )
+        source = RealCameraSource(0)
+
+        with (
+            patch.object(
+                RealCameraSource,
+                "_create_capture",
+                return_value=capture,
+            ),
+            patch("backend.services.camera_service.time.sleep"),
+        ):
+            with self.assertRaises(CameraReadError):
+                source.start()
+
+        self.assertFalse(source.is_available())
+
+    def test_mostly_black_frames_with_sparse_noise_are_not_available(self) -> None:
+        noisy_black_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        noisy_black_frame[::64, ::64] = 255
+        capture = FakeCapture(
+            [(True, noisy_black_frame)] * FRAME_VALIDATION_ATTEMPTS
         )
         source = RealCameraSource(0)
 

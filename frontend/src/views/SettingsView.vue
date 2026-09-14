@@ -45,7 +45,7 @@ async function shutdownApplication(): Promise<void> {
   try {
     await apiClient.post("/system/shutdown");
     messageType.value = "success";
-    message.value = "ColorVision 正在退出";
+    message.value = "颜色识别系统正在退出";
   } catch (error) {
     messageType.value = "error";
     message.value = getApiErrorMessage(error);
@@ -187,7 +187,7 @@ onMounted(loadConfig);
             :disabled="shuttingDown"
             @click="shutdownApplication"
           >
-            {{ shuttingDown ? "正在退出" : "退出 ColorVision" }}
+            {{ shuttingDown ? "正在退出" : "退出颜色识别系统" }}
           </button>
           <button
             class="button"

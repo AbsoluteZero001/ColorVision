@@ -35,6 +35,7 @@ FRAME_VALIDATION_COUNT = 3
 FRAME_VALIDATION_ATTEMPTS = 12
 FRAME_READ_RETRY_SECONDS = 0.08
 FRAME_BLACK_MAX_VALUE = 8
+FRAME_BLACK_MAX_MEAN = 2.0
 FRAME_MIN_VISIBLE_PIXEL_RATIO = 0.001
 MOCK_WIDTH = 960
 MOCK_HEIGHT = 540
@@ -232,6 +233,8 @@ class RealCameraSource:
             return False
 
         brightest_channel = frame.max(axis=-1)
+        if float(brightest_channel.mean()) <= FRAME_BLACK_MAX_MEAN:
+            return False
         visible_pixels = np.count_nonzero(
             brightest_channel > FRAME_BLACK_MAX_VALUE
         )
@@ -243,10 +246,12 @@ class RealCameraSource:
     @staticmethod
     def _create_capture(index: int) -> cv2.VideoCapture:
         if platform.system() == "Windows":
-            capture = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-            if capture.isOpened():
-                return capture
-            capture.release()
+            for backend in (cv2.CAP_DSHOW, cv2.CAP_MSMF):
+                capture = cv2.VideoCapture(index, backend)
+                if capture.isOpened():
+                    return capture
+                capture.release()
+            return cv2.VideoCapture()
         return cv2.VideoCapture(index)
 
     @staticmethod

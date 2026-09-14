@@ -25,17 +25,21 @@ logger = logging.getLogger(__name__)
 MIN_LUMA = 8.0
 MAX_LUMA = 247.0
 MIN_VALID_PIXEL_RATIO = 0.05
+MAD_SCALE_FACTOR = 1.4826
+OUTLIER_SIGMA_LIMIT = 3.0
+MIN_INLIER_PIXEL_RATIO = 0.1
 
 
 class ColorService:
     """Convert ROI pixels into normalized RGB, CIELAB, and HEX values."""
 
     def calculate_rgb(self, roi: npt.NDArray[np.uint8]) -> tuple[int, int, int]:
-        """Return robust median RGB values from BGR ROI pixels.
+        """Return robust RGB values from BGR ROI pixels.
 
         Clearly dark and bright pixels are removed when enough valid pixels
-        remain. This avoids shadows and specular highlights dominating fabric
-        color while preserving black and very light ROI samples.
+        remain. A median/MAD filter then removes per-channel outliers before
+        averaging the remaining pixels. This improves repeatability without
+        changing the measured color through software white balance or gain.
         """
         if roi is None or roi.size == 0:
             raise AppException(
@@ -61,27 +65,25 @@ class ColorService:
         ):
             usable_pixels = rgb_pixels
 
-        median = np.median(usable_pixels, axis=0)
-        red, green, blue = np.clip(np.rint(median), 0, 255).astype(np.uint8)
+        estimate = self._robust_rgb(usable_pixels)
+        red, green, blue = np.clip(np.rint(estimate), 0, 255).astype(np.uint8)
         return int(red), int(green), int(blue)
 
     def calculate_lab(self, rgb: tuple[int, int, int]) -> tuple[float, float, float]:
         """Convert sRGB to standard CIELAB: L=0..100 and a/b around -128..127.
 
-        OpenCV's 8-bit LAB output stores L as 0..255 and offsets a/b by 128.
-        Those raw values must be converted before returning them to clients.
+        The sRGB value is converted as float32 rather than quantized uint8 LAB
+        to avoid OpenCV's 8-bit offset/scale conversion error.
         """
         red, green, blue = self._validate_rgb(rgb)
-        bgr_pixel = np.array([[[blue, green, red]]], dtype=np.uint8)
-        opencv_lab = cv2.cvtColor(bgr_pixel, cv2.COLOR_BGR2LAB)[0, 0]
-
-        lightness = float(opencv_lab[0]) * 100.0 / 255.0
-        a_channel = float(opencv_lab[1]) - 128.0
-        b_channel = float(opencv_lab[2]) - 128.0
+        bgr_pixel = (
+            np.array([[[blue, green, red]]], dtype=np.float32) / 255.0
+        )
+        lab = cv2.cvtColor(bgr_pixel, cv2.COLOR_BGR2LAB)[0, 0]
         return (
-            round(lightness, 2),
-            round(a_channel, 2),
-            round(b_channel, 2),
+            round(float(lab[0]), 2),
+            round(float(lab[1]), 2),
+            round(float(lab[2]), 2),
         )
 
     def rgb_to_hex(self, rgb: tuple[int, int, int]) -> str:
@@ -131,6 +133,29 @@ class ColorService:
                 height=height,
             ),
         )
+
+    @staticmethod
+    def _robust_rgb(
+        pixels: npt.NDArray[np.float64],
+    ) -> npt.NDArray[np.float64]:
+        """Estimate RGB with a median/MAD inlier filter."""
+        median = np.median(pixels, axis=0)
+        deviations = np.abs(pixels - median)
+        mad = np.median(deviations, axis=0) * MAD_SCALE_FACTOR
+        robust_scale = np.maximum(mad, 1.0)
+        inlier_mask = np.all(
+            deviations <= OUTLIER_SIGMA_LIMIT * robust_scale,
+            axis=1,
+        )
+        inliers = pixels[inlier_mask]
+
+        minimum_inliers = max(
+            1,
+            int(pixels.shape[0] * MIN_INLIER_PIXEL_RATIO),
+        )
+        if inliers.shape[0] < minimum_inliers:
+            return median
+        return np.mean(inliers, axis=0)
 
     @staticmethod
     def _to_rgb_pixels(

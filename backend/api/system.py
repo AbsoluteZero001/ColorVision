@@ -22,7 +22,7 @@ class ShutdownData(BaseModel):
 
 @router.post("/shutdown", response_model=ApiResponse[ShutdownData])
 async def shutdown_application() -> ApiResponse[ShutdownData]:
-    """Gracefully stop a launcher-managed ColorVision process."""
+    """Gracefully stop a launcher-managed application process."""
     if not is_managed_runtime():
         raise AppException(
             message="Shutdown is available only in the managed executable runtime",

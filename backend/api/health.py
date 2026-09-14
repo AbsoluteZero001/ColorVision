@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict
 
-from backend import __version__
+from backend import APP_NAME, __version__
 from backend.models.common import ApiResponse
 from backend.runtime import is_managed_runtime
 from backend.services.config_service import get_config_service
@@ -30,7 +30,7 @@ async def get_health() -> ApiResponse[HealthData]:
     return ApiResponse(
         data=HealthData(
             status="ok",
-            app="ColorVision",
+            app=APP_NAME,
             version=__version__,
             mock_mode=config_data.mock_mode,
             managed_runtime=is_managed_runtime(),

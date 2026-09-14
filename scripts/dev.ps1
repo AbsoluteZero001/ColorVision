@@ -43,7 +43,7 @@ try {
         exit $LASTEXITCODE
     }
 
-    Write-Host "Starting ColorVision backend at http://127.0.0.1:8000"
+    Write-Host "Starting color recognition backend at http://127.0.0.1:8000"
     $BackendProcess = Start-Process `
         -FilePath $Python `
         -ArgumentList $BackendArguments `
@@ -52,7 +52,7 @@ try {
         -PassThru
 
     try {
-        Write-Host "Starting ColorVision frontend at http://127.0.0.1:5173"
+        Write-Host "Starting color recognition frontend at http://127.0.0.1:5173"
         npm run dev
     }
     finally {

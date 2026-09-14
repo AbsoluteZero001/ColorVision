@@ -10,8 +10,8 @@ import ApiStatus from "./components/ApiStatus.vue";
       <RouterLink class="brand" to="/">
         <span class="brand-mark" aria-hidden="true"></span>
         <span>
-          <strong>ColorVision</strong>
-          <small>布料颜色识别系统</small>
+          <strong>颜色识别系统</strong>
+          <small>V1.2.0</small>
         </span>
       </RouterLink>
 

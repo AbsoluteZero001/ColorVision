@@ -35,7 +35,7 @@ class ApiIntegrationTests(unittest.TestCase):
         frontend = self.client.get("/")
 
         self.assertEqual(health.status_code, 200)
-        self.assertEqual(health.json()["data"]["app"], "ColorVision")
+        self.assertEqual(health.json()["data"]["app"], "颜色识别系统")
         self.assertEqual(docs.status_code, 200)
         self.assertEqual(frontend.status_code, 200)
         self.assertIn("text/html", frontend.headers["content-type"])

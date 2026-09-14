@@ -48,7 +48,7 @@ def _application_url(port: int) -> str:
     return f"http://{HOST}:{port}/"
 
 
-def _probe_colorvision(port: int) -> bool:
+def _probe_application(port: int) -> bool:
     try:
         with urllib.request.urlopen(_health_url(port), timeout=1.0) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -107,7 +107,7 @@ def _wait_for_server(
 ) -> bool:
     deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
-        if server.started and _probe_colorvision(port):
+        if server.started and _probe_application(port):
             return True
         if not server_thread.is_alive():
             return False
@@ -116,16 +116,16 @@ def _wait_for_server(
 
 
 def main() -> int:
-    """Start ColorVision, open the browser, and wait for graceful shutdown."""
+    """Start the application, open the browser, and wait for graceful shutdown."""
     setup_logging()
     ensure_runtime_directories()
 
     try:
         config_data = get_config_service().get_config()
     except Exception as exc:
-        logger.exception("ColorVision configuration initialization failed")
+        logger.exception("%s configuration initialization failed", APP_NAME)
         _show_message(
-            f"ColorVision 配置初始化失败：\n{exc}",
+            f"{APP_NAME} 配置初始化失败：\n{exc}",
             f"{APP_NAME} 启动失败",
             error=True,
         )
@@ -134,11 +134,11 @@ def main() -> int:
     port = config_data.port or DEFAULT_PORT
     application_url = _application_url(port)
 
-    if _probe_colorvision(port):
-        logger.info("ColorVision is already running on port %d", port)
+    if _probe_application(port):
+        logger.info("%s is already running on port %d", APP_NAME, port)
         _open_browser(application_url)
         _show_message(
-            f"ColorVision 已经运行，已打开现有页面：\n{application_url}",
+            f"{APP_NAME} 已经运行，已打开现有页面：\n{application_url}",
             APP_NAME,
         )
         return 0
@@ -178,14 +178,14 @@ def main() -> int:
         server.should_exit = True
         server_thread.join(timeout=10)
         message = (
-            f"ColorVision 本地服务未能在端口 {port} 正常启动。\n"
+            f"{APP_NAME} 本地服务未能在端口 {port} 正常启动。\n"
             "请查看 data/logs/colorvision.log。"
         )
         logger.error(message.replace("\n", " "))
         _show_message(message, f"{APP_NAME} 启动失败", error=True)
         return 1
 
-    logger.info("ColorVision service ready: %s", application_url)
+    logger.info("%s service ready: %s", APP_NAME, application_url)
     _open_browser(application_url)
 
     try:
@@ -201,7 +201,7 @@ def main() -> int:
         if server_thread.is_alive():
             logger.warning("Server thread did not stop within 10 seconds")
 
-    logger.info("ColorVision process stopped")
+    logger.info("%s process stopped", APP_NAME)
     return 0
 
 

@@ -1,4 +1,4 @@
-"""FastAPI application entry point for ColorVision."""
+"""FastAPI application entry point for the color recognition system."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from backend import __version__
+from backend import APP_NAME, __version__
 from backend.api import camera, color, config, health, system, upload
 from backend.models.common import ErrorCode, ErrorResponse
 from backend.services.camera_service import get_camera_service
@@ -32,9 +32,6 @@ from backend.utils.paths import (
     get_frontend_dist_directory,
 )
 
-APP_NAME = "ColorVision"
-
-
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Initialize shared runtime resources without starting camera hardware."""
@@ -43,7 +40,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     import logging
 
     logger = logging.getLogger(__name__)
-    logger.info("ColorVision backend starting")
+    logger.info("%s backend starting", APP_NAME)
 
     try:
         config_data = get_config_service().get_config()
@@ -57,7 +54,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     yield
     get_camera_service().close_camera()
-    logger.info("ColorVision backend stopped")
+    logger.info("%s backend stopped", APP_NAME)
 
 
 app = FastAPI(
@@ -160,12 +157,13 @@ def _frontend_response(full_path: str = "") -> Response:
             status_code=503,
             content=(
                 "<!doctype html><html lang=\"en\"><head>"
-                "<meta charset=\"utf-8\"><title>ColorVision frontend unavailable</title>"
+                "<meta charset=\"utf-8\"><title>"
+                f"{escape(APP_NAME)} frontend unavailable</title>"
                 "</head><body>"
-                "<h1>ColorVision frontend is not available</h1>"
+                f"<h1>{escape(APP_NAME)} frontend is not available</h1>"
                 "<p>The Vue production bundle was not found. Run "
                 "<code>npm run build</code> in the frontend directory, then restart "
-                "ColorVision.</p>"
+                f"{escape(APP_NAME)}.</p>"
                 f"<p>Expected file: <code>{escape(str(current_index))}</code></p>"
                 "</body></html>"
             ),

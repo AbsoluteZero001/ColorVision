@@ -44,4 +44,4 @@ if (-not $SkipFrontendBuild) {
     }
 }
 
-Write-Host "ColorVision tests completed."
+Write-Host "Color recognition system tests completed."
