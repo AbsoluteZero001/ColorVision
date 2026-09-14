@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from backend.api import upload as upload_api
 from backend.main import app
 from backend.models.config import AppConfig
+from backend.services.camera_service import get_camera_service
 from backend.services.upload_service import UploadService
 
 
@@ -101,6 +102,38 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertTrue(
             response.json()["data"]["request_id"].startswith("MOCK-")
         )
+
+    def test_camera_mock_capture_lifecycle(self) -> None:
+        opened = self.client.post("/api/camera/mock")
+        self.assertEqual(opened.status_code, 200, opened.text)
+        self.assertEqual(opened.json()["data"]["state"], "mock")
+        self.assertTrue(opened.json()["data"]["opened"])
+
+        captured = self.client.post("/api/camera/capture")
+        self.assertEqual(captured.status_code, 200, captured.text)
+        image_url = captured.json()["data"]["image_url"]
+        preview = self.client.get(image_url)
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.headers["content-type"], "image/jpeg")
+
+        closed = self.client.post("/api/camera/close")
+        self.assertEqual(closed.status_code, 200, closed.text)
+        self.assertEqual(closed.json()["data"]["state"], "closed")
+
+    def test_camera_detect_error_uses_unified_envelope(self) -> None:
+        service = get_camera_service()
+        with patch.object(
+            service,
+            "_scan_cameras_unlocked",
+            return_value=[],
+        ):
+            response = self.client.post("/api/camera/detect")
+
+        self.assertEqual(response.status_code, 404, response.text)
+        payload = response.json()
+        self.assertFalse(payload["success"])
+        self.assertIsNone(payload["data"])
+        self.assertEqual(payload["code"], "CAMERA_NOT_FOUND")
 
 
 if __name__ == "__main__":

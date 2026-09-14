@@ -16,6 +16,9 @@ class ErrorCode(StrEnum):
     CAMERA_NOT_FOUND = "CAMERA_NOT_FOUND"
     CAMERA_NOT_AVAILABLE = "CAMERA_NOT_AVAILABLE"
     CAMERA_OPEN_FAILED = "CAMERA_OPEN_FAILED"
+    CAMERA_DEVICE_BUSY = "CAMERA_DEVICE_BUSY"
+    CAMERA_DISCONNECTED = "CAMERA_DISCONNECTED"
+    CAMERA_READ_FAILED = "CAMERA_READ_FAILED"
     CAMERA_CLOSED = "CAMERA_CLOSED"
     CAPTURE_FAILED = "CAPTURE_FAILED"
     IMAGE_READ_FAILED = "IMAGE_READ_FAILED"
@@ -47,5 +50,6 @@ class ErrorResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     success: Literal[False] = False
+    data: None = None
     message: str
     code: str

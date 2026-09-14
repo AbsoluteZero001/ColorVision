@@ -30,8 +30,17 @@ STREAM_BOUNDARY = "frame"
 @router.get("/list", response_model=ApiResponse[CameraListData])
 async def list_cameras() -> ApiResponse[CameraListData]:
     """List available camera devices."""
-    cameras = await asyncio.to_thread(get_camera_service().list_cameras)
-    return ApiResponse(data=CameraListData(cameras=cameras))
+    service = get_camera_service()
+    cameras = await asyncio.to_thread(service.list_cameras)
+    status = await asyncio.to_thread(service.get_status)
+    return ApiResponse(
+        data=CameraListData(
+            cameras=cameras,
+            state=status.state,
+            message=status.message,
+            code=status.code,
+        )
+    )
 
 
 @router.get("/status", response_model=ApiResponse[CameraStatusData])
@@ -48,6 +57,33 @@ async def open_camera(request: CameraOpenRequest) -> ApiResponse[CameraStatusDat
         get_camera_service().open_camera,
         request.index,
     )
+    return ApiResponse(data=status)
+
+
+@router.post("/detect", response_model=ApiResponse[CameraStatusData])
+async def detect_camera() -> ApiResponse[CameraStatusData]:
+    """Release the old device, redetect hardware, and open a camera."""
+    status = await asyncio.to_thread(get_camera_service().reconnect)
+    return ApiResponse(data=status)
+
+
+@router.post("/reconnect", response_model=ApiResponse[CameraStatusData])
+async def reconnect_camera(
+    request: CameraOpenRequest | None = None,
+) -> ApiResponse[CameraStatusData]:
+    """Reconnect to the selected camera, or the first available device."""
+    index = request.index if request is not None else None
+    status = await asyncio.to_thread(
+        get_camera_service().reconnect,
+        index,
+    )
+    return ApiResponse(data=status)
+
+
+@router.post("/mock", response_model=ApiResponse[CameraStatusData])
+async def use_mock_camera() -> ApiResponse[CameraStatusData]:
+    """Switch the active frame source to the Mock Camera."""
+    status = await asyncio.to_thread(get_camera_service().switch_to_mock)
     return ApiResponse(data=status)
 
 

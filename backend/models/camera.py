@@ -1,6 +1,29 @@
 """Camera-related API models."""
 
+from enum import StrEnum
+
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class CameraState(StrEnum):
+    """Unified lifecycle state exposed by the camera service."""
+
+    INITIALIZING = "initializing"
+    AVAILABLE = "available"
+    NOT_FOUND = "not_found"
+    OPEN_FAILED = "open_failed"
+    BUSY = "busy"
+    DISCONNECTED = "disconnected"
+    READ_FAILED = "read_failed"
+    MOCK = "mock"
+    CLOSED = "closed"
+
+
+class CameraSourceType(StrEnum):
+    """Frame source selected by the camera service."""
+
+    REAL = "real"
+    MOCK = "mock"
 
 
 class CameraInfo(BaseModel):
@@ -19,6 +42,9 @@ class CameraListData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     cameras: list[CameraInfo]
+    state: CameraState = CameraState.INITIALIZING
+    message: str | None = None
+    code: str | None = None
 
 
 class CameraStatusData(BaseModel):
@@ -26,13 +52,18 @@ class CameraStatusData(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    opened: bool
+    state: CameraState = CameraState.INITIALIZING
+    source: CameraSourceType | None = None
+    camera_id: str | None = None
+    opened: bool = False
     index: int | None = None
     name: str | None = None
-    available: bool
+    available: bool = False
     width: int | None = None
     height: int | None = None
     fps: float | None = None
+    message: str | None = None
+    code: str | None = None
 
 
 class CameraOpenRequest(BaseModel):
