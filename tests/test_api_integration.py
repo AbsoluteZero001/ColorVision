@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import cv2
@@ -37,6 +39,19 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(docs.status_code, 200)
         self.assertEqual(frontend.status_code, 200)
         self.assertIn("text/html", frontend.headers["content-type"])
+
+    def test_missing_frontend_returns_html_not_api_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            with patch(
+                "backend.main.get_frontend_dist_directory",
+                return_value=Path(temporary_directory),
+            ):
+                response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("text/html", response.headers["content-type"])
+        self.assertNotIn("application/json", response.headers["content-type"])
+        self.assertIn("Vue production bundle was not found", response.text)
 
     def test_color_analysis_and_roi_validation(self) -> None:
         image = np.full((120, 160, 3), (40, 35, 120), dtype=np.uint8)

@@ -1,7 +1,10 @@
-# ColorVision 1.1
+# ColorVision 1.2
 
-ColorVision 是运行在 Windows 本机的颜色采集与识别系统。V1.1 提供可交付的 onedir EXE，
+ColorVision 是运行在 Windows 本机的颜色采集与识别系统。V1.2 提供可交付的 onedir EXE，
 最终用户不需要安装 Python、Node.js 或 npm。
+
+V1.2 将前端启动与摄像头初始化解耦。即使没有摄像头、摄像头被占用或运行中断开，
+FastAPI 与 Vue 页面仍会正常启动，并显示可恢复的 Camera 状态。
 
 完整流程：
 
@@ -10,6 +13,7 @@ ColorVision 是运行在 Windows 本机的颜色采集与识别系统。V1.1 提
   -> 启动本地 FastAPI
   -> 托管 Vue 生产页面
   -> 自动打开默认浏览器
+  -> 初始化 CameraService 并检测摄像头
   -> 摄像头实时画面
   -> 拍照与 ROI 框选
   -> RGB / LAB / HEX
@@ -32,7 +36,7 @@ dist/ColorVision/
 1. 保持整个 `ColorVision` 目录完整，不要只复制 EXE。
 2. 双击 `ColorVision.exe`。
 3. 等待默认浏览器自动打开 `http://127.0.0.1:8000/`。
-4. 系统会自动检测并打开第一台可用摄像头。
+4. 系统会自动检测并打开第一台可用摄像头；没有设备时可切换到 Mock Camera。
 5. 点击“拍照”，在图片上拖动 ROI。
 6. 点击“识别颜色”，查看 RGB、LAB 和 HEX。
 7. 点击“上传服务器”完成 Mock 或真实 API 上传。
@@ -84,9 +88,36 @@ ColorVision/
 $env:COLORVISION_CONFIG = "D:\ColorVisionData\config.json"
 ```
 
-## Mock 与真实 API
+## Camera 状态与容错
 
-Mock 模式：
+CameraService 支持以下状态：
+
+| 状态 | 含义 | 页面操作 |
+| --- | --- | --- |
+| `initializing` | 正在检测或初始化 | 等待 |
+| `available` | 真实摄像头已打开 | 实时预览、拍照 |
+| `not_found` | 未检测到摄像头 | 重新检测、使用 Mock |
+| `open_failed` | 摄像头存在但无法打开 | 重新检测、使用 Mock |
+| `busy` | 设备可能被其他程序占用 | 重新检测、使用 Mock |
+| `disconnected` | 运行中设备断开 | 重新连接、使用 Mock |
+| `read_failed` | 当前帧读取失败 | 重新检测、使用 Mock |
+| `mock` | Mock Camera 正在运行 | 拍照、切回真实摄像头 |
+
+重新检测和重连会先释放旧 `VideoCapture`，再枚举设备并重新打开，所有生命周期操作会串行执行，
+避免快速重复点击造成重复打开或资源泄漏。
+
+## Mock Camera 与 Mock Upload
+
+这两项是独立功能：
+
+- Mock Camera：代替摄像头提供动态测试画面，不依赖 USB 摄像头。
+- Mock Upload：`mock_mode=true` 时模拟上传服务器响应，不访问外部 API。
+
+当前配置文件中的 `mock_mode` 仍只控制上传行为。Mock Camera 由页面按钮或 Camera API 控制。
+
+## Mock 上传与真实 API
+
+Mock 上传模式：
 
 ```json
 {
@@ -217,6 +248,8 @@ npm run dev
 - ROI 零尺寸和越界校验
 - 配置默认值、持久化和旧字段迁移
 - Mock 上传响应
+- 无摄像头、设备占用和运行中断开状态
+- Mock Camera 拍照、存储与静态预览
 - 真实摄像头拍照、存储与静态预览
 
 ## 构建 EXE
@@ -228,9 +261,11 @@ npm run dev
 构建流程：
 
 1. 执行 Vue TypeScript 检查和 `npm run build`。
-2. 使用 `colorvision.spec` 收集后端、OpenCV、Python 依赖和 Vue 资源。
-3. 生成 PyInstaller onedir 目录。
-4. 将 README 复制到发布目录。
+2. 校验 `frontend/dist/index.html` 和 `frontend/dist/assets` 是否完整。
+3. 使用 `colorvision.spec` 收集后端、OpenCV、Python 依赖和 Vue 资源。
+4. 生成 PyInstaller onedir 目录。
+5. 校验发布目录内的 Vue 资源。
+6. 将 README 复制到发布目录。
 
 输出：
 
@@ -255,6 +290,9 @@ dist/ColorVision/ColorVision.exe
 | GET | `/api/camera/list` | 枚举摄像头 |
 | GET | `/api/camera/status` | 摄像头状态 |
 | POST | `/api/camera/open` | 打开摄像头 |
+| POST | `/api/camera/detect` | 释放旧设备、重新检测并打开 |
+| POST | `/api/camera/reconnect` | 重连指定或首台可用摄像头 |
+| POST | `/api/camera/mock` | 切换到 Mock Camera |
 | POST | `/api/camera/close` | 关闭摄像头 |
 | GET | `/api/camera/stream` | MJPEG 实时画面 |
 | POST | `/api/camera/capture` | 拍照 |
@@ -278,6 +316,18 @@ dist/ColorVision/ColorVision.exe
 `CAMERA_OPEN_FAILED`：
 
 摄像头不存在、驱动不可用，或者已被其他程序占用。
+
+`CAMERA_DEVICE_BUSY`：
+
+摄像头可能正在被其他相机、会议或浏览器程序占用。
+
+`CAMERA_DISCONNECTED`：
+
+摄像头运行过程中断开，重新连接设备后可再次检测。
+
+`CAMERA_READ_FAILED`：
+
+摄像头仍被打开，但当前帧读取失败。
 
 `CAPTURE_FAILED`：
 
