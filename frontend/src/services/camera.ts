@@ -21,6 +21,28 @@ export async function getCameraStatus(): Promise<CameraStatus> {
   return response.data.data;
 }
 
+export async function detectCamera(): Promise<CameraStatus> {
+  const response =
+    await apiClient.post<ApiResponse<CameraStatus>>("/camera/detect");
+  return response.data.data;
+}
+
+export async function reconnectCamera(
+  index: number | null = null,
+): Promise<CameraStatus> {
+  const response = await apiClient.post<ApiResponse<CameraStatus>>(
+    "/camera/reconnect",
+    index === null ? undefined : { index },
+  );
+  return response.data.data;
+}
+
+export async function useMockCamera(): Promise<CameraStatus> {
+  const response =
+    await apiClient.post<ApiResponse<CameraStatus>>("/camera/mock");
+  return response.data.data;
+}
+
 export async function openCamera(index: number): Promise<CameraStatus> {
   const response = await apiClient.post<ApiResponse<CameraStatus>>(
     "/camera/open",

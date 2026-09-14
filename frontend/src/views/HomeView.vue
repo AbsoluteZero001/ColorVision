@@ -41,7 +41,18 @@ const workflowState = computed(() => {
   if (frozen.value) {
     return "已拍照";
   }
-  return cameraReady.value ? "实时预览" : "设备未连接";
+  const states: Record<CameraStatus["state"], string> = {
+    initializing: "摄像头初始化",
+    available: "实时预览",
+    not_found: "未检测到摄像头",
+    open_failed: "摄像头打开失败",
+    busy: "摄像头设备占用",
+    disconnected: "摄像头已断开",
+    read_failed: "画面读取失败",
+    mock: "Mock Camera",
+    closed: "设备未连接",
+  };
+  return cameraStatus.value ? states[cameraStatus.value.state] : "设备未连接";
 });
 
 function handleCameraStatus(status: CameraStatus): void {
@@ -213,7 +224,6 @@ onMounted(loadConfig);
         :frozen="frozen"
         :captured-image-url="capture?.image_url"
         @status-change="handleCameraStatus"
-        @error="errorMessage = $event"
       />
       <CapturePanel
         class="capture-area"

@@ -8,11 +8,21 @@ export const apiClient = axios.create({
 });
 
 export function getApiErrorMessage(error: unknown): string {
+  return getApiErrorDetails(error).message;
+}
+
+export function getApiErrorDetails(error: unknown): {
+  message: string;
+  code: string | null;
+} {
   if (axios.isAxiosError<ApiError>(error)) {
-    return error.response?.data?.message || error.message;
+    return {
+      message: error.response?.data?.message || error.message,
+      code: error.response?.data?.code || null,
+    };
   }
   if (error instanceof Error) {
-    return error.message;
+    return { message: error.message, code: null };
   }
-  return "请求失败";
+  return { message: "请求失败", code: null };
 }
