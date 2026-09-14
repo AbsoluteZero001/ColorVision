@@ -11,6 +11,7 @@ const form = reactive<AppConfig>({
   camera_id: "",
   auto_upload: false,
   mock_mode: true,
+  request_timeout_seconds: 10,
 });
 
 const loading = ref(true);
@@ -95,6 +96,19 @@ onMounted(loadConfig);
             required
             :disabled="loading || saving"
             placeholder="CAM-001"
+          />
+        </label>
+
+        <label class="field">
+          <span>API 超时（秒）</span>
+          <input
+            v-model.number="form.request_timeout_seconds"
+            type="number"
+            min="0.1"
+            max="120"
+            step="0.1"
+            required
+            :disabled="loading || saving"
           />
         </label>
 

@@ -1,26 +1,47 @@
-"""Color-analysis API route definition."""
+"""Color-analysis API route."""
+
+import asyncio
 
 from fastapi import APIRouter, File, Form, UploadFile
 
 from backend.models.color import ColorAnalysisData
 from backend.models.common import ApiResponse, ErrorCode
+from backend.services.color_service import get_color_service
+from backend.services.image_service import get_image_service
 from backend.utils.errors import AppException
 
 router = APIRouter(prefix="/color", tags=["color"])
+MAX_IMAGE_BYTES = 25 * 1024 * 1024
 
 
 @router.post("/analyze", response_model=ApiResponse[ColorAnalysisData])
 async def analyze_color(
     image: UploadFile = File(...),
-    x: int = Form(..., ge=0),
-    y: int = Form(..., ge=0),
-    width: int = Form(..., gt=0),
-    height: int = Form(..., gt=0),
+    x: int = Form(...),
+    y: int = Form(...),
+    width: int = Form(...),
+    height: int = Form(...),
 ) -> ApiResponse[ColorAnalysisData]:
     """Analyze the average color inside an image ROI."""
-    del image, x, y, width, height
-    raise AppException(
-        message="Color analysis is not implemented yet",
-        code=ErrorCode.FEATURE_NOT_IMPLEMENTED,
-        status_code=501,
+    try:
+        content = await image.read(MAX_IMAGE_BYTES + 1)
+    finally:
+        await image.close()
+
+    if len(content) > MAX_IMAGE_BYTES:
+        raise AppException(
+            message="Uploaded image exceeds the 25 MB limit",
+            code=ErrorCode.IMAGE_READ_FAILED,
+            status_code=413,
+        )
+
+    decoded = await asyncio.to_thread(get_image_service().decode_image, content)
+    result = await asyncio.to_thread(
+        get_color_service().analyze_roi,
+        decoded,
+        x,
+        y,
+        width,
+        height,
     )
+    return ApiResponse(data=result)

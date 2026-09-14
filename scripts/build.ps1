@@ -29,7 +29,7 @@ if ($FrontendOnly) {
 }
 
 if (-not (Test-Path -LiteralPath $SpecPath)) {
-    throw "colorvision.spec is not available yet. PyInstaller packaging is reserved for Phase 10."
+    throw "colorvision.spec is not available yet. PyInstaller packaging has not been implemented."
 }
 
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"

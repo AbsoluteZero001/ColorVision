@@ -4,6 +4,7 @@ export interface AppConfig {
   camera_id: string;
   auto_upload: boolean;
   mock_mode: boolean;
+  request_timeout_seconds: number;
 }
 
 export type AppConfigUpdate = Partial<AppConfig>;

@@ -13,6 +13,9 @@ export interface CameraStatus {
   index: number | null;
   name: string | null;
   available: boolean;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
 }
 
 export interface CaptureResult {

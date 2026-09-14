@@ -30,6 +30,9 @@ class CameraStatusData(BaseModel):
     index: int | None = None
     name: str | None = None
     available: bool
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
 
 
 class CameraOpenRequest(BaseModel):

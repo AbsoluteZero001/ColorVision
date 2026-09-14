@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AppConfig(BaseModel):
@@ -15,6 +15,7 @@ class AppConfig(BaseModel):
     camera_id: str = "CAM-001"
     auto_upload: bool = False
     mock_mode: bool = True
+    request_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
 
     @field_validator("api_url")
     @classmethod
@@ -43,6 +44,7 @@ class AppConfigUpdate(BaseModel):
     camera_id: str | None = None
     auto_upload: bool | None = None
     mock_mode: bool | None = None
+    request_timeout_seconds: float | None = Field(default=None, gt=0, le=120)
 
     @field_validator("api_url")
     @classmethod

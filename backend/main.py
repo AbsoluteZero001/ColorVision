@@ -18,13 +18,16 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from backend import __version__
 from backend.api import camera, color, config, health, upload
 from backend.models.common import ApiResponse, ErrorCode, ErrorResponse
+from backend.services.camera_service import get_camera_service
 from backend.services.config_service import get_config_service
 from backend.utils.errors import AppException
 from backend.utils.logging_utils import setup_logging
+from backend.utils.paths import get_data_directory
 
 APP_NAME = "ColorVision"
 
@@ -50,6 +53,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         logger.warning("Configuration could not be loaded at startup: %s", exc.message)
 
     yield
+    get_camera_service().close_camera()
     logger.info("ColorVision backend stopped")
 
 
@@ -71,6 +75,22 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+data_directory = get_data_directory()
+captures_directory = data_directory / "captures"
+results_directory = data_directory / "results"
+captures_directory.mkdir(parents=True, exist_ok=True)
+results_directory.mkdir(parents=True, exist_ok=True)
+app.mount(
+    "/media/captures",
+    StaticFiles(directory=captures_directory),
+    name="capture-media",
+)
+app.mount(
+    "/media/results",
+    StaticFiles(directory=results_directory),
+    name="result-media",
 )
 
 
