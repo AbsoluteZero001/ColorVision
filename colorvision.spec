@@ -9,6 +9,21 @@ from PyInstaller.utils.hooks import (
 )
 
 PROJECT_ROOT = Path(SPECPATH).resolve()
+FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
+FRONTEND_INDEX = FRONTEND_DIST / "index.html"
+FRONTEND_ASSETS = FRONTEND_DIST / "assets"
+
+if not FRONTEND_INDEX.is_file():
+    raise SystemExit(
+        f"Vue production entry is missing: {FRONTEND_INDEX}. "
+        "Run the frontend build before packaging."
+    )
+
+if not FRONTEND_ASSETS.is_dir() or not any(FRONTEND_ASSETS.iterdir()):
+    raise SystemExit(
+        f"Vue production assets are missing or empty: {FRONTEND_ASSETS}. "
+        "Run the frontend build before packaging."
+    )
 
 datas = [
     (
@@ -16,7 +31,7 @@ datas = [
         "backend/config",
     ),
     (
-        str(PROJECT_ROOT / "frontend" / "dist"),
+        str(FRONTEND_DIST),
         "frontend/dist",
     ),
 ]

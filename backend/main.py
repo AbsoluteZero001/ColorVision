@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from contextlib import asynccontextmanager
+from html import escape
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -16,12 +17,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend import __version__
 from backend.api import camera, color, config, health, system, upload
-from backend.models.common import ApiResponse, ErrorCode, ErrorResponse
+from backend.models.common import ErrorCode, ErrorResponse
 from backend.services.camera_service import get_camera_service
 from backend.services.config_service import get_config_service
 from backend.utils.errors import AppException
@@ -142,47 +143,64 @@ app.include_router(config.router, prefix=api_prefix)
 frontend_dist = get_frontend_dist_directory()
 frontend_index = frontend_dist / "index.html"
 
-if frontend_index.is_file():
-    frontend_assets = frontend_dist / "assets"
-    if frontend_assets.is_dir():
-        app.mount(
-            "/assets",
-            StaticFiles(directory=frontend_assets),
-            name="frontend-assets",
+frontend_assets = frontend_dist / "assets"
+if frontend_assets.is_dir():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=frontend_assets),
+        name="frontend-assets",
+    )
+
+
+def _frontend_response(full_path: str = "") -> Response:
+    """Serve a Vue file or return a diagnostic HTML response when absent."""
+    current_index = get_frontend_dist_directory() / "index.html"
+    if not current_index.is_file():
+        return HTMLResponse(
+            status_code=503,
+            content=(
+                "<!doctype html><html lang=\"en\"><head>"
+                "<meta charset=\"utf-8\"><title>ColorVision frontend unavailable</title>"
+                "</head><body>"
+                "<h1>ColorVision frontend is not available</h1>"
+                "<p>The Vue production bundle was not found. Run "
+                "<code>npm run build</code> in the frontend directory, then restart "
+                "ColorVision.</p>"
+                f"<p>Expected file: <code>{escape(str(current_index))}</code></p>"
+                "</body></html>"
+            ),
+            headers={"Cache-Control": "no-store"},
         )
 
-    @app.get("/", include_in_schema=False)
-    async def serve_frontend() -> FileResponse:
-        return FileResponse(frontend_index)
+    resolved_root = current_index.parent.resolve()
+    if not full_path:
+        return FileResponse(current_index)
 
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def serve_frontend_fallback(full_path: str) -> FileResponse:
-        if full_path.startswith("api/"):
-            raise HTTPException(status_code=404, detail="API route not found")
+    candidate = (resolved_root / full_path).resolve()
+    try:
+        candidate.relative_to(resolved_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="File not found") from exc
 
-        resolved_root = frontend_dist.resolve()
-        candidate = (frontend_dist / full_path).resolve()
-        try:
-            candidate.relative_to(resolved_root)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail="File not found") from exc
+    if candidate.is_file():
+        return FileResponse(candidate)
+    return FileResponse(current_index)
 
-        if candidate.is_file():
-            return FileResponse(candidate)
-        return FileResponse(frontend_index)
 
-else:
+@app.get("/", include_in_schema=False)
+async def serve_frontend() -> Response:
+    """Serve the Vue application entry point."""
+    return _frontend_response()
 
-    @app.get("/", response_model=ApiResponse[dict[str, str]], tags=["system"])
-    async def root() -> ApiResponse[dict[str, str]]:
-        """Expose API discovery when the Vue production bundle is absent."""
-        return ApiResponse(
-            data={
-                "name": APP_NAME,
-                "version": __version__,
-                "docs": "/docs",
-            }
-        )
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def serve_frontend_fallback(
+    full_path: str,
+) -> Response:
+    """Serve static frontend files and the Vue history fallback."""
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="API route not found")
+    return _frontend_response(full_path)
 
 
 def run() -> None:
