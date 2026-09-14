@@ -42,8 +42,14 @@ const streamFailed = ref(false);
 
 let statusPollTimer: number | null = null;
 
+const cameraFeedActive = computed(
+  () =>
+    status.value.opened &&
+    (status.value.state === "available" || status.value.state === "mock"),
+);
+
 const streamUrl = computed(() => {
-  if (!status.value.opened || props.frozen || streamFailed.value) {
+  if (!cameraFeedActive.value || props.frozen || streamFailed.value) {
     return "";
   }
   return `/api/camera/stream?session=${streamSession.value}`;
@@ -57,7 +63,7 @@ const displayImageUrl = computed(() => {
 });
 
 const resolutionText = computed(() => {
-  if (!status.value.opened) {
+  if (!cameraFeedActive.value) {
     return status.value.name || "未连接";
   }
   if (!status.value.width || !status.value.height) {
@@ -70,11 +76,11 @@ const statusTitle = computed(() => {
   const titles: Record<CameraState, string> = {
     initializing: "正在初始化摄像头",
     available: "摄像头已连接",
-    not_found: "未检测到摄像头",
+    not_found: "未检测到可用摄像头",
     open_failed: "摄像头打开失败",
     busy: "摄像头可能正在被其他程序使用",
     disconnected: "摄像头已断开",
-    read_failed: "摄像头画面读取失败",
+    read_failed: "无法读取摄像头画面",
     mock: "Mock Camera",
     closed: "摄像头未连接",
   };
@@ -144,7 +150,10 @@ function updateStatus(nextStatus: CameraStatus): void {
   if (nextStatus.index !== null) {
     selectedIndex.value = nextStatus.index;
   }
-  if (nextStatus.opened) {
+  if (
+    nextStatus.opened &&
+    (nextStatus.state === "available" || nextStatus.state === "mock")
+  ) {
     streamFailed.value = false;
     streamSession.value += 1;
   }
@@ -222,7 +231,10 @@ async function closeSelected(): Promise<void> {
 async function syncStatus(): Promise<void> {
   try {
     const nextStatus = await getCameraStatus();
-    if (nextStatus.opened) {
+    if (
+      nextStatus.opened &&
+      (nextStatus.state === "available" || nextStatus.state === "mock")
+    ) {
       status.value = nextStatus;
       emit("statusChange", nextStatus);
       return;
@@ -239,7 +251,7 @@ function restartPreview(): void {
 }
 
 function handleStreamError(): void {
-  if (!status.value.opened || props.frozen) {
+  if (!cameraFeedActive.value || props.frozen) {
     return;
   }
   streamFailed.value = true;
@@ -257,7 +269,7 @@ function handleStreamError(): void {
 onMounted(async () => {
   await detectSelected();
   statusPollTimer = window.setInterval(() => {
-    if (status.value.opened) {
+    if (cameraFeedActive.value) {
       void syncStatus();
     }
   }, 2_000);
@@ -267,7 +279,7 @@ onBeforeUnmount(() => {
   if (statusPollTimer !== null) {
     window.clearInterval(statusPollTimer);
   }
-  if (status.value.opened) {
+  if (cameraFeedActive.value) {
     void closeCamera();
   }
 });
@@ -296,7 +308,7 @@ defineExpose({
           切换真实摄像头
         </button>
         <select
-          v-if="!status.opened && cameras.length > 0"
+          v-if="!cameraFeedActive && cameras.length > 0"
           v-model="selectedIndex"
           :disabled="busy"
           aria-label="摄像头"
@@ -310,7 +322,7 @@ defineExpose({
           </option>
         </select>
         <button
-          v-if="!status.opened && cameras.length > 0"
+          v-if="!cameraFeedActive && cameras.length > 0"
           class="button compact"
           type="button"
           :disabled="busy || selectedIndex === null"
@@ -319,7 +331,7 @@ defineExpose({
           {{ busy ? "连接中" : "打开" }}
         </button>
         <button
-          v-else-if="status.opened"
+          v-else-if="cameraFeedActive"
           class="button secondary compact"
           type="button"
           :disabled="busy"
@@ -373,7 +385,7 @@ defineExpose({
             使用 Mock 模式
           </button>
           <button
-            v-if="streamFailed && status.opened"
+            v-if="streamFailed && cameraFeedActive"
             class="button compact"
             type="button"
             @click="restartPreview"

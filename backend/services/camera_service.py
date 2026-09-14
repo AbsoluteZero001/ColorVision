@@ -31,6 +31,9 @@ DEFAULT_SCAN_LIMIT = 5
 DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 720
 FRAME_READ_ATTEMPTS = 4
+FRAME_VALIDATION_COUNT = 3
+FRAME_VALIDATION_ATTEMPTS = 12
+FRAME_READ_RETRY_SECONDS = 0.08
 MOCK_WIDTH = 960
 MOCK_HEIGHT = 540
 MOCK_FPS = 15.0
@@ -117,11 +120,12 @@ class RealCameraSource:
         capture.set(cv2.CAP_PROP_FRAME_WIDTH, DEFAULT_WIDTH)
         capture.set(cv2.CAP_PROP_FRAME_HEIGHT, DEFAULT_HEIGHT)
 
-        frame = self._read_from_capture(capture)
+        frame = self._read_consecutive_frames(capture)
         if frame is None:
             capture.release()
-            raise CameraOpenError(
-                f"Camera {self.index} opened but no frame is available"
+            raise CameraReadError(
+                f"Camera {self.index} opened but did not provide "
+                f"{FRAME_VALIDATION_COUNT} consecutive valid frames"
             )
 
         self._capture = capture
@@ -178,16 +182,53 @@ class RealCameraSource:
     @staticmethod
     def _read_from_capture(capture: cv2.VideoCapture) -> FrameArray | None:
         for _ in range(FRAME_READ_ATTEMPTS):
-            try:
-                ok, frame = capture.read()
-            except cv2.error:
-                logger.exception("OpenCV frame read raised an exception")
-                return None
-
-            if ok and frame is not None and frame.size > 0:
+            ok, frame = RealCameraSource._read_once(capture)
+            if ok and RealCameraSource._is_valid_frame(frame):
                 return frame
-            time.sleep(0.05)
+            if not capture.isOpened():
+                break
+            time.sleep(FRAME_READ_RETRY_SECONDS)
         return None
+
+    @staticmethod
+    def _read_consecutive_frames(
+        capture: cv2.VideoCapture,
+    ) -> FrameArray | None:
+        valid_frames: list[FrameArray] = []
+        for _ in range(FRAME_VALIDATION_ATTEMPTS):
+            ok, frame = RealCameraSource._read_once(capture)
+            if ok and RealCameraSource._is_valid_frame(frame):
+                valid_frames.append(frame)
+                if len(valid_frames) >= FRAME_VALIDATION_COUNT:
+                    return frame
+            else:
+                valid_frames.clear()
+
+            if not capture.isOpened():
+                break
+            time.sleep(FRAME_READ_RETRY_SECONDS)
+        return None
+
+    @staticmethod
+    def _read_once(
+        capture: cv2.VideoCapture,
+    ) -> tuple[bool, FrameArray | None]:
+        try:
+            ok, frame = capture.read()
+        except cv2.error as exc:
+            logger.warning("OpenCV frame read failed: %s", exc)
+            return False, None
+        return bool(ok), frame
+
+    @staticmethod
+    def _is_valid_frame(frame: FrameArray | None) -> bool:
+        if frame is None or not isinstance(frame, np.ndarray):
+            return False
+        if frame.size <= 0 or frame.ndim not in (2, 3):
+            return False
+        if len(frame.shape) < 2 or frame.shape[0] <= 0 or frame.shape[1] <= 0:
+            return False
+        return True
 
     @staticmethod
     def _create_capture(index: int) -> cv2.VideoCapture:
@@ -393,6 +434,23 @@ class CameraService:
                     code=code,
                     status_code=409,
                 ) from exc
+            except CameraReadError as exc:
+                source.stop()
+                logger.warning(
+                    "Camera opened but failed frame validation: index=%d error=%s",
+                    target_index,
+                    exc,
+                )
+                self._set_state(
+                    CameraState.READ_FAILED,
+                    message="无法读取摄像头画面",
+                    code=ErrorCode.CAMERA_READ_FAILED,
+                )
+                raise AppException(
+                    message=str(exc),
+                    code=ErrorCode.CAMERA_READ_FAILED,
+                    status_code=503,
+                ) from exc
 
             self._source = source
             self._source_type = source.source_type
@@ -503,20 +561,23 @@ class CameraService:
             else None
         )
 
-        for index in range(scan_limit):
-            if index == active_index:
-                cameras.append(
-                    CameraInfo(
-                        index=index,
-                        name=self._camera_name(index),
-                        available=True,
-                    )
+        if active_index is not None:
+            return [
+                CameraInfo(
+                    index=active_index,
+                    name=self._camera_name(active_index),
+                    available=True,
                 )
-                continue
+            ]
 
+        for index in range(scan_limit):
             capture = RealCameraSource._create_capture(index)
             try:
-                if capture.isOpened():
+                if (
+                    capture.isOpened()
+                    and RealCameraSource._read_consecutive_frames(capture)
+                    is not None
+                ):
                     cameras.append(
                         CameraInfo(
                             index=index,
@@ -524,6 +585,12 @@ class CameraService:
                             available=True,
                         )
                     )
+                    break
+                logger.debug(
+                    "Camera index %d ignored because no valid frame sequence "
+                    "was available",
+                    index,
+                )
             finally:
                 capture.release()
         return cameras
