@@ -34,6 +34,8 @@ FRAME_READ_ATTEMPTS = 4
 FRAME_VALIDATION_COUNT = 3
 FRAME_VALIDATION_ATTEMPTS = 12
 FRAME_READ_RETRY_SECONDS = 0.08
+FRAME_BLACK_MAX_VALUE = 8
+FRAME_MIN_VISIBLE_PIXEL_RATIO = 0.001
 MOCK_WIDTH = 960
 MOCK_HEIGHT = 540
 MOCK_FPS = 15.0
@@ -125,7 +127,7 @@ class RealCameraSource:
             capture.release()
             raise CameraReadError(
                 f"Camera {self.index} opened but did not provide "
-                f"{FRAME_VALIDATION_COUNT} consecutive valid frames"
+                f"{FRAME_VALIDATION_COUNT} consecutive usable frames"
             )
 
         self._capture = capture
@@ -228,7 +230,15 @@ class RealCameraSource:
             return False
         if len(frame.shape) < 2 or frame.shape[0] <= 0 or frame.shape[1] <= 0:
             return False
-        return True
+
+        brightest_channel = frame.max(axis=-1)
+        visible_pixels = np.count_nonzero(
+            brightest_channel > FRAME_BLACK_MAX_VALUE
+        )
+        return (
+            visible_pixels / brightest_channel.size
+            >= FRAME_MIN_VISIBLE_PIXEL_RATIO
+        )
 
     @staticmethod
     def _create_capture(index: int) -> cv2.VideoCapture:

@@ -10,6 +10,7 @@ import numpy as np
 from backend.models.camera import CameraInfo, CameraState
 from backend.models.common import ErrorCode
 from backend.services.camera_service import (
+    FRAME_VALIDATION_ATTEMPTS,
     FRAME_VALIDATION_COUNT,
     CameraOpenError,
     CameraReadError,
@@ -147,9 +148,9 @@ class CameraServiceTests(unittest.TestCase):
         self.assertFalse(source.is_available())
 
     def test_single_frame_before_read_failures_is_not_available(self) -> None:
-        black_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        visible_frame = np.full((720, 1280, 3), 80, dtype=np.uint8)
         capture = FakeCapture(
-            [(True, black_frame)] + [(False, None)] * 11
+            [(True, visible_frame)] + [(False, None)] * 11
         )
         source = RealCameraSource(0)
 
@@ -167,9 +168,9 @@ class CameraServiceTests(unittest.TestCase):
         self.assertFalse(source.is_available())
 
     def test_consecutive_valid_frames_mark_camera_available(self) -> None:
-        black_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        visible_frame = np.full((720, 1280, 3), 80, dtype=np.uint8)
         capture = FakeCapture(
-            [(True, black_frame)] * FRAME_VALIDATION_COUNT
+            [(True, visible_frame)] * FRAME_VALIDATION_COUNT
         )
         source = RealCameraSource(0)
 
@@ -185,12 +186,51 @@ class CameraServiceTests(unittest.TestCase):
         self.assertEqual(source.get_status().height, 720)
         source.stop()
 
+    def test_consecutive_black_frames_are_not_available(self) -> None:
+        black_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        capture = FakeCapture(
+            [(True, black_frame)] * FRAME_VALIDATION_ATTEMPTS
+        )
+        source = RealCameraSource(0)
+
+        with (
+            patch.object(
+                RealCameraSource,
+                "_create_capture",
+                return_value=capture,
+            ),
+            patch("backend.services.camera_service.time.sleep"),
+        ):
+            with self.assertRaises(CameraReadError):
+                source.start()
+
+        self.assertFalse(source.is_available())
+
     def test_scan_ignores_open_device_without_valid_frames(self) -> None:
         with (
             patch.object(
                 RealCameraSource,
                 "_create_capture",
                 side_effect=lambda _: FakeCapture([(False, None)] * 12),
+            ),
+            patch("backend.services.camera_service.time.sleep"),
+        ):
+            cameras = self.service.detect_cameras()
+
+        self.assertEqual(cameras, [])
+        status = self.service.get_status()
+        self.assertEqual(status.state, CameraState.NOT_FOUND)
+        self.assertFalse(status.opened)
+
+    def test_scan_ignores_open_device_with_black_frames(self) -> None:
+        black_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        with (
+            patch.object(
+                RealCameraSource,
+                "_create_capture",
+                side_effect=lambda _: FakeCapture(
+                    [(True, black_frame)] * FRAME_VALIDATION_ATTEMPTS
+                ),
             ),
             patch("backend.services.camera_service.time.sleep"),
         ):
