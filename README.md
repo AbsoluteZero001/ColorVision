@@ -74,7 +74,9 @@ ColorVision/
   "auto_upload": false,
   "mock_mode": true,
   "timeout": 10.0,
-  "port": 8000
+  "port": 8000,
+  "image_retention_days": 0,
+  "max_image_count": 0
 }
 ```
 
@@ -87,6 +89,8 @@ ColorVision/
 - `mock_mode`：`true` 时不访问外部服务器。
 - `timeout`：外部 API 超时时间，单位秒。
 - `port`：本地服务端口，修改后需要重启 EXE。
+- `image_retention_days`：拍摄图片保留天数，设为 `0` 时不按时间清理。
+- `max_image_count`：拍摄图片最大保留数量，设为 `0` 时不按数量清理。
 
 也可以使用环境变量指定其他配置文件：
 
@@ -289,16 +293,20 @@ npm run dev
 
 1. 执行 Vue TypeScript 检查和 `npm run build`。
 2. 校验 `frontend/dist/index.html` 和 `frontend/dist/assets` 是否完整。
-3. 使用 `colorvision.spec` 收集后端、OpenCV、Python 依赖和 Vue 资源。
-4. 生成 PyInstaller onedir 目录。
-5. 校验发布目录内的 Vue 资源。
-6. 将 README 复制到发布目录。
+3. 使用 `colorvision.spec` 收集后端、OpenCV、Python 依赖、Vue 资源和 Windows 版本信息。
+4. 在 `build/release-staging` 中生成 PyInstaller onedir 目录。
+5. 校验 staging 内的 EXE 和 Vue 资源。
+6. 生成版本化 ZIP，并只替换 `dist/ColorVision` 中的程序文件。
+7. 保留已有 `config/` 和 `data/`。
 
 输出：
 
 ```text
 dist/ColorVision/ColorVision.exe
+dist/ColorVision-v1.3.0-win-x64.zip
 ```
+
+ZIP 文件名自动读取 `backend.__version__`，升级版本后无需手工修改构建脚本。
 
 只构建前端：
 
@@ -347,6 +355,10 @@ dist/ColorVision/ColorVision.exe
 `CAMERA_DEVICE_BUSY`：
 
 摄像头可能正在被其他相机、会议或浏览器程序占用。
+
+`CAMERA_DRIVER_ERROR`：
+
+OpenCV 或摄像头驱动在打开、配置设备时发生异常。
 
 `CAMERA_DISCONNECTED`：
 

@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import (
@@ -7,8 +8,62 @@ from PyInstaller.utils.hooks import (
     collect_submodules,
     copy_metadata,
 )
+from PyInstaller.utils.win32.versioninfo import (
+    FixedFileInfo,
+    StringFileInfo,
+    StringStruct,
+    StringTable,
+    VarFileInfo,
+    VarStruct,
+    VSVersionInfo,
+)
 
 PROJECT_ROOT = Path(SPECPATH).resolve()
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from backend import __version__
+
+
+def _version_tuple(version: str) -> tuple[int, int, int, int]:
+    parts = [int(part) for part in version.split(".")]
+    return tuple((parts + [0, 0, 0, 0])[:4])
+
+
+APP_VERSION = _version_tuple(__version__)
+VERSION_INFO = VSVersionInfo(
+    ffi=FixedFileInfo(
+        filevers=APP_VERSION,
+        prodvers=APP_VERSION,
+        mask=0x3F,
+        flags=0x0,
+        OS=0x40004,
+        fileType=0x1,
+        subtype=0x0,
+        date=(0, 0),
+    ),
+    kids=[
+        StringFileInfo(
+            [
+                StringTable(
+                    "040904B0",
+                    [
+                        StringStruct("CompanyName", "ColorVision"),
+                        StringStruct(
+                            "FileDescription",
+                            "ColorVision Color Recognition System",
+                        ),
+                        StringStruct("FileVersion", __version__),
+                        StringStruct("ProductName", "ColorVision"),
+                        StringStruct("ProductVersion", __version__),
+                    ],
+                )
+            ]
+        ),
+        VarFileInfo([VarStruct("Translation", [1033, 1200])]),
+    ],
+)
+
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
 FRONTEND_INDEX = FRONTEND_DIST / "index.html"
 FRONTEND_ASSETS = FRONTEND_DIST / "assets"
@@ -117,6 +172,7 @@ executable = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    version=VERSION_INFO,
 )
 
 collection = COLLECT(
