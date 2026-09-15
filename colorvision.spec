@@ -93,6 +93,11 @@ datas = [
 binaries = []
 hiddenimports = collect_submodules("backend")
 
+
+def _include_runtime_submodule(module_name: str) -> bool:
+    return not module_name.startswith("certifi.tests")
+
+
 for package_name in (
     "cv2",
     "fastapi",
@@ -105,7 +110,10 @@ for package_name in (
     "certifi",
 ):
     package_datas, package_binaries, package_hiddenimports = collect_all(
-        package_name
+        package_name,
+        include_py_files=False,
+        exclude_datas=["tests", "tests/**"],
+        filter_submodules=_include_runtime_submodule,
     )
     datas += package_datas
     binaries += package_binaries

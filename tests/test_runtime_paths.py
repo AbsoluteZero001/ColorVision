@@ -33,22 +33,24 @@ class RuntimePathTests(unittest.TestCase):
                 patch.object(sys, "executable", str(executable)),
                 patch.dict(os.environ, {"COLORVISION_CONFIG": ""}),
             ):
+                expected_root = executable.parent.resolve()
+                expected_resources = resources.resolve()
                 self.assertEqual(
                     get_project_root(),
-                    executable.parent.resolve(),
+                    expected_root,
                 )
-                self.assertEqual(get_resource_root(), resources.resolve())
+                self.assertEqual(get_resource_root(), expected_resources)
                 self.assertEqual(
                     get_runtime_config_path(),
-                    executable.parent / "config" / "config.json",
+                    expected_root / "config" / "config.json",
                 )
                 self.assertEqual(
                     get_bundled_config_path(),
-                    resources / "backend" / "config" / "config.json",
+                    expected_resources / "backend" / "config" / "config.json",
                 )
                 self.assertEqual(
                     get_frontend_dist_directory(),
-                    resources / "frontend" / "dist",
+                    expected_resources / "frontend" / "dist",
                 )
 
 
