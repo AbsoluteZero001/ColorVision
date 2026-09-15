@@ -438,3 +438,20 @@ ROI 宽高为 0，或者选区超出原图范围。
 - 颜色算法具备稳健采样和标准 CIELAB 换算，但尚未进行设备级标准色卡标定。
 - Token 以明文保存在本机 JSON 配置中。
 - 当前未加入 AI 目标检测、分割或跟踪。
+
+## Code signing policy
+
+Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+
+### Team roles
+
+- Committers and reviewers: AbsoluteZero
+- Approvers: AbsoluteZero
+
+### Privacy policy
+
+[ColorVision Privacy Policy](https://github.com/AbsoluteZero001/ColorVision/blob/main/PRIVACY.md)
+
+## License
+
+本项目采用 [MIT License](https://github.com/AbsoluteZero001/ColorVision/blob/main/LICENSE)。
