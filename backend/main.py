@@ -21,10 +21,11 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend import APP_NAME, __version__
-from backend.api import camera, color, config, health, system, upload
+from backend.api import camera, color, config, health, logs, system, upload
 from backend.models.common import ErrorCode, ErrorResponse
 from backend.services.camera_service import get_camera_service
 from backend.services.config_service import get_config_service
+from backend.services.log_service import get_log_service
 from backend.utils.errors import AppException
 from backend.utils.logging_utils import setup_logging
 from backend.utils.paths import (
@@ -42,6 +43,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     logger = logging.getLogger(__name__)
     logger.info("%s backend starting", APP_NAME)
 
+    log_service = get_log_service()
+    try:
+        log_service.initialize()
+    except AppException as exc:
+        logger.warning("Upload log storage could not be initialized: %s", exc.message)
+
     try:
         config_data = get_config_service().get_config()
         logger.info(
@@ -51,6 +58,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         )
     except AppException as exc:
         logger.warning("Configuration could not be loaded at startup: %s", exc.message)
+    else:
+        try:
+            removed_logs = log_service.enforce_retention()
+            if removed_logs:
+                logger.info("Startup cleaned %d expired upload log(s)", removed_logs)
+        except AppException as exc:
+            logger.warning("Upload log retention failed at startup: %s", exc.message)
 
     yield
     get_camera_service().close_camera()
@@ -77,7 +91,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-captures_directory, results_directory, _ = ensure_runtime_directories()
+captures_directory, results_directory, logs_directory = ensure_runtime_directories()
 app.mount(
     "/media/captures",
     StaticFiles(directory=captures_directory),
@@ -87,6 +101,11 @@ app.mount(
     "/media/results",
     StaticFiles(directory=results_directory),
     name="result-media",
+)
+app.mount(
+    "/media/logs/images",
+    StaticFiles(directory=logs_directory / "images"),
+    name="log-media",
 )
 
 
@@ -136,6 +155,7 @@ app.include_router(camera.router, prefix=api_prefix)
 app.include_router(color.router, prefix=api_prefix)
 app.include_router(upload.router, prefix=api_prefix)
 app.include_router(config.router, prefix=api_prefix)
+app.include_router(logs.router, prefix=api_prefix)
 
 frontend_dist = get_frontend_dist_directory()
 frontend_index = frontend_dist / "index.html"

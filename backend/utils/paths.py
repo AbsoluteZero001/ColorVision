@@ -63,10 +63,12 @@ def ensure_runtime_directories() -> tuple[Path, Path, Path]:
     captures_directory = data_directory / "captures"
     results_directory = data_directory / "results"
     logs_directory = data_directory / "logs"
+    log_images_directory = logs_directory / "images"
     for directory in (
         captures_directory,
         results_directory,
         logs_directory,
+        log_images_directory,
     ):
         directory.mkdir(parents=True, exist_ok=True)
     return captures_directory, results_directory, logs_directory

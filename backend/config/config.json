@@ -7,5 +7,9 @@
   "timeout": 10.0,
   "port": 8000,
   "image_retention_days": 0,
-  "max_image_count": 0
+  "max_image_count": 0,
+  "log_enabled": true,
+  "log_image_storage_enabled": true,
+  "log_retention_days": 0,
+  "max_log_count": 0
 }

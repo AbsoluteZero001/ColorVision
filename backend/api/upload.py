@@ -1,6 +1,7 @@
 """Upload API route and multipart validation."""
 
 import asyncio
+import logging
 import re
 
 from fastapi import APIRouter, File, Form, UploadFile
@@ -11,10 +12,12 @@ from backend.models.common import ApiResponse, ErrorCode
 from backend.models.upload import UploadResultData
 from backend.services.color_service import get_color_service
 from backend.services.image_service import get_image_service
+from backend.services.log_service import get_log_service
 from backend.services.upload_service import UploadPayload, get_upload_service
 from backend.utils.errors import AppException
 
 router = APIRouter(tags=["upload"])
+logger = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 HEX_PATTERN = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
@@ -132,4 +135,12 @@ async def upload_result(
         timestamp=timestamp.strip(),
     )
     result = await get_upload_service().upload(payload)
+    try:
+        await asyncio.to_thread(
+            get_log_service().record_upload,
+            payload,
+            result,
+        )
+    except Exception:
+        logger.exception("Successful upload could not be written to the local log")
     return ApiResponse(data=result)

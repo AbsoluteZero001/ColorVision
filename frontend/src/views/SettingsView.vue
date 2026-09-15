@@ -15,6 +15,10 @@ const form = reactive<AppConfig>({
   port: 8000,
   image_retention_days: 0,
   max_image_count: 0,
+  log_enabled: true,
+  log_image_storage_enabled: true,
+  log_retention_days: 0,
+  max_log_count: 0,
 });
 
 const loading = ref(true);
@@ -82,7 +86,7 @@ onMounted(loadConfig);
     <div class="page-heading">
       <div>
         <h1>本地设置</h1>
-        <p>上传、设备与运行模式参数</p>
+        <p>上传、设备、日志与运行模式参数</p>
       </div>
     </div>
 
@@ -196,6 +200,61 @@ onMounted(loadConfig);
             :disabled="loading || saving"
           />
         </label>
+
+        <div class="settings-section-heading field-wide">
+          <strong>本地日志与隐私</strong>
+          <span>日志只保存在本机，不会发送到上传服务器。</span>
+        </div>
+
+        <label class="toggle-row">
+          <span>
+            <strong>记录上传日志</strong>
+            <small>上传成功后记录北京时间和色彩参数</small>
+          </span>
+          <input
+            v-model="form.log_enabled"
+            type="checkbox"
+            :disabled="loading || saving"
+          />
+        </label>
+
+        <label class="toggle-row">
+          <span>
+            <strong>保存日志图片</strong>
+            <small>在本机保存上传原图和识别区域图</small>
+          </span>
+          <input
+            v-model="form.log_image_storage_enabled"
+            type="checkbox"
+            :disabled="loading || saving || !form.log_enabled"
+          />
+        </label>
+
+        <label class="field">
+          <span>日志保留天数（0 表示不按时间清理）</span>
+          <input
+            v-model.number="form.log_retention_days"
+            type="number"
+            min="0"
+            max="3650"
+            step="1"
+            required
+            :disabled="loading || saving || !form.log_enabled"
+          />
+        </label>
+
+        <label class="field">
+          <span>最大日志条数（0 表示不按数量清理）</span>
+          <input
+            v-model.number="form.max_log_count"
+            type="number"
+            min="0"
+            max="1000000"
+            step="1"
+            required
+            :disabled="loading || saving || !form.log_enabled"
+          />
+        </label>
       </div>
 
       <div class="settings-footer">
@@ -305,6 +364,22 @@ onMounted(loadConfig);
   width: 38px;
   height: 20px;
   accent-color: var(--accent);
+}
+
+.settings-section-heading {
+  display: grid;
+  gap: 5px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-section-heading strong {
+  font-size: 0.96rem;
+}
+
+.settings-section-heading span {
+  color: var(--text-muted);
+  font-size: 0.8rem;
 }
 
 .settings-footer {

@@ -19,6 +19,10 @@ class AppConfig(BaseModel):
     port: int = Field(default=8000, ge=1, le=65535)
     image_retention_days: int = Field(default=0, ge=0, le=3650)
     max_image_count: int = Field(default=0, ge=0, le=1_000_000)
+    log_enabled: bool = True
+    log_image_storage_enabled: bool = True
+    log_retention_days: int = Field(default=0, ge=0, le=3650)
+    max_log_count: int = Field(default=0, ge=0, le=1_000_000)
 
     @field_validator("api_url")
     @classmethod
@@ -51,6 +55,14 @@ class AppConfigUpdate(BaseModel):
     port: int | None = Field(default=None, ge=1, le=65535)
     image_retention_days: int | None = Field(default=None, ge=0, le=3650)
     max_image_count: int | None = Field(
+        default=None,
+        ge=0,
+        le=1_000_000,
+    )
+    log_enabled: bool | None = None
+    log_image_storage_enabled: bool | None = None
+    log_retention_days: int | None = Field(default=None, ge=0, le=3650)
+    max_log_count: int | None = Field(
         default=None,
         ge=0,
         le=1_000_000,

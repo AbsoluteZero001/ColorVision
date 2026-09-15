@@ -17,6 +17,7 @@ from backend.main import app
 from backend.models.config import AppConfig
 from backend.services.camera_service import get_camera_service
 from backend.services.config_service import ConfigService
+from backend.services.log_service import LogService
 from backend.services.upload_service import UploadService
 
 
@@ -86,38 +87,146 @@ class ApiIntegrationTests(unittest.TestCase):
         mock_service = UploadService(
             config_provider=lambda: AppConfig(mock_mode=True),
         )
-        with patch.object(upload_api, "get_upload_service", return_value=mock_service):
-            response = self.client.post(
-                "/api/upload",
-                files={
-                    "original_image": (
-                        "original.jpg",
-                        original_encoded.tobytes(),
-                        "image/jpeg",
-                    ),
-                    "roi_image": (
-                        "roi.jpg",
-                        roi_encoded.tobytes(),
-                        "image/jpeg",
-                    ),
-                },
-                data={
-                    "rgb": json.dumps({"r": 120, "g": 35, "b": 40}),
-                    "lab": json.dumps({"l": 27.84, "a": 37.0, "b": 18.0}),
-                    "hex": "#782328",
-                    "roi": json.dumps(
-                        {"x": 30, "y": 20, "width": 60, "height": 40}
-                    ),
-                    "camera_id": "CAM-TEST",
-                    "timestamp": "2026-09-14T14:00:00+08:00",
-                },
+        with tempfile.TemporaryDirectory() as directory:
+            log_service = LogService(
+                logs_directory=Path(directory) / "logs",
+                config_provider=lambda: AppConfig(
+                    log_enabled=True,
+                    log_image_storage_enabled=True,
+                ),
             )
+            with (
+                patch.object(
+                    upload_api,
+                    "get_upload_service",
+                    return_value=mock_service,
+                ),
+                patch.object(
+                    upload_api,
+                    "get_log_service",
+                    return_value=log_service,
+                ),
+            ):
+                response = self.client.post(
+                    "/api/upload",
+                    files={
+                        "original_image": (
+                            "original.jpg",
+                            original_encoded.tobytes(),
+                            "image/jpeg",
+                        ),
+                        "roi_image": (
+                            "roi.jpg",
+                            roi_encoded.tobytes(),
+                            "image/jpeg",
+                        ),
+                    },
+                    data={
+                        "rgb": json.dumps({"r": 120, "g": 35, "b": 40}),
+                        "lab": json.dumps(
+                            {"l": 27.84, "a": 37.0, "b": 18.0}
+                        ),
+                        "hex": "#782328",
+                        "roi": json.dumps(
+                            {"x": 30, "y": 20, "width": 60, "height": 40}
+                        ),
+                        "camera_id": "CAM-TEST",
+                        "timestamp": "2026-09-14T14:00:00+08:00",
+                    },
+                )
+            self.assertEqual(log_service.list_entries().total, 1)
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["data"]["mode"], "mock")
         self.assertTrue(
             response.json()["data"]["request_id"].startswith("MOCK-")
         )
+
+    def test_upload_logs_endpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log_service = LogService(
+                logs_directory=Path(directory) / "logs",
+                config_provider=lambda: AppConfig(
+                    log_enabled=True,
+                    log_image_storage_enabled=False,
+                ),
+            )
+            entry = log_service.record_upload(
+                upload_api.UploadPayload(
+                    original_image=b"original",
+                    original_filename="original.jpg",
+                    original_content_type="image/jpeg",
+                    roi_image=b"roi",
+                    roi_filename="roi.jpg",
+                    roi_content_type="image/jpeg",
+                    rgb={"r": 120, "g": 35, "b": 40},
+                    lab={"l": 27.84, "a": 37.0, "b": 18.0},
+                    hex="#782328",
+                    roi={"x": 30, "y": 20, "width": 60, "height": 40},
+                    camera_id="CAM-TEST",
+                    timestamp="2026-09-14T14:00:00+08:00",
+                ),
+                upload_api.UploadResultData(
+                    success=True,
+                    message="Mock upload success",
+                    request_id="MOCK-LOG-1",
+                    mode="mock",
+                ),
+            )
+            self.assertIsNotNone(entry)
+
+            with patch(
+                "backend.api.logs.get_log_service",
+                return_value=log_service,
+            ):
+                listed = self.client.get("/api/logs")
+                deleted = self.client.delete(f"/api/logs/{entry.id}")
+                empty = self.client.get("/api/logs")
+                cleared = self.client.delete("/api/logs")
+
+        self.assertEqual(listed.status_code, 200, listed.text)
+        self.assertEqual(listed.json()["data"]["total"], 1)
+        self.assertEqual(
+            listed.json()["data"]["items"][0]["uploaded_at_beijing"].count(":"),
+            2,
+        )
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertEqual(deleted.json()["data"]["deleted"], 1)
+        self.assertEqual(empty.status_code, 200, empty.text)
+        self.assertEqual(empty.json()["data"]["total"], 0)
+        self.assertEqual(cleared.status_code, 200, cleared.text)
+        self.assertEqual(cleared.json()["data"]["deleted"], 0)
+
+    def test_log_images_are_served_from_the_public_media_route(self) -> None:
+        log_media_route = next(
+            route
+            for route in app.routes
+            if getattr(route, "name", None) == "log-media"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            images_directory = Path(directory)
+            image_path = images_directory / "log-image.jpg"
+            image_path.write_bytes(b"local-log-image")
+
+            with (
+                patch.object(
+                    log_media_route.app,
+                    "directory",
+                    images_directory,
+                ),
+                patch.object(
+                    log_media_route.app,
+                    "all_directories",
+                    [images_directory],
+                ),
+            ):
+                response = self.client.get(
+                    "/media/logs/images/log-image.jpg"
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.content, b"local-log-image")
+        self.assertEqual(response.headers["content-type"], "image/jpeg")
 
     def test_camera_mock_capture_lifecycle(self) -> None:
         opened = self.client.post("/api/camera/mock")

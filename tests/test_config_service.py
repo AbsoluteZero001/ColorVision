@@ -20,6 +20,8 @@ class ConfigServiceTests(unittest.TestCase):
             defaults = service.get_config()
             self.assertEqual(defaults.port, 8000)
             self.assertEqual(defaults.timeout, 10.0)
+            self.assertTrue(defaults.log_enabled)
+            self.assertTrue(defaults.log_image_storage_enabled)
 
             service.update_config(
                 AppConfigUpdate(
@@ -33,6 +35,8 @@ class ConfigServiceTests(unittest.TestCase):
             self.assertEqual(reloaded.camera_id, "CAM-TEST")
             self.assertEqual(reloaded.timeout, 12.5)
             self.assertEqual(reloaded.port, 8123)
+            self.assertEqual(reloaded.log_retention_days, 0)
+            self.assertEqual(reloaded.max_log_count, 0)
 
     def test_legacy_timeout_key_is_migrated(self) -> None:
         with TemporaryDirectory() as directory:

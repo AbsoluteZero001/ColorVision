@@ -1,12 +1,14 @@
-# 颜色识别系统 V1.3.0
+# 颜色识别系统 V1.4.0
 
-颜色识别系统是运行在 Windows 本机的颜色采集与识别系统。V1.3.0 提供可交付的 onedir EXE，
+颜色识别系统是运行在 Windows 本机的颜色采集与识别系统。V1.4.0 提供可交付的 onedir EXE，
 最终用户不需要安装 Python、Node.js 或 npm。
 
-V1.3.0 保留前端启动与摄像头初始化解耦。即使没有摄像头、摄像头被占用或运行中断开，
+V1.4.0 新增本地 SQLite 上传日志、图片预览、颜色参数记录和日志留存策略。
+
+V1.4.0 保留前端启动与摄像头初始化解耦。即使没有摄像头、摄像头被占用或运行中断开，
 FastAPI 与 Vue 页面仍会正常启动，并显示可恢复的 Camera 状态。
 
-V1.3.0 同时将颜色识别结果预览统一为单一纯色块，不再显示密集的棋盘格小矩形。
+V1.4.0 继续使用单一纯色块展示颜色识别结果，并以本地文件形式保存日志图片。
 
 为保持既有安装路径和升级兼容性，发布目录与可执行文件仍使用
 `ColorVision` / `ColorVision.exe` 作为技术文件名；界面和文档中的正式名称统一为
@@ -46,7 +48,8 @@ dist/ColorVision/
 5. 点击“拍照”，在图片上拖动 ROI。
 6. 点击“识别颜色”，查看 RGB、LAB 和 HEX。
 7. 点击“上传服务器”完成 Mock 或真实 API 上传。
-8. 在“设置”页面点击“退出颜色识别系统”可正确释放摄像头并关闭服务。
+8. 在“日志”页面查看北京时间、上传图片、ROI 图片和颜色参数。
+9. 在“设置”页面点击“退出颜色识别系统”可正确释放摄像头并关闭服务。
 
 重复双击 EXE 时，程序会检测现有服务并提示颜色识别系统已经在运行。
 
@@ -62,6 +65,9 @@ ColorVision/
     ├── captures/
     ├── results/
     └── logs/
+        ├── colorvision.db
+        ├── colorvision.log
+        └── images/
 ```
 
 默认配置：
@@ -76,7 +82,11 @@ ColorVision/
   "timeout": 10.0,
   "port": 8000,
   "image_retention_days": 0,
-  "max_image_count": 0
+  "max_image_count": 0,
+  "log_enabled": true,
+  "log_image_storage_enabled": true,
+  "log_retention_days": 0,
+  "max_log_count": 0
 }
 ```
 
@@ -91,6 +101,10 @@ ColorVision/
 - `port`：本地服务端口，修改后需要重启 EXE。
 - `image_retention_days`：拍摄图片保留天数，设为 `0` 时不按时间清理。
 - `max_image_count`：拍摄图片最大保留数量，设为 `0` 时不按数量清理。
+- `log_enabled`：上传成功后是否写入本地上传日志。
+- `log_image_storage_enabled`：日志是否在本机保存上传原图和识别区域图。
+- `log_retention_days`：日志保留天数，设为 `0` 时不按时间清理。
+- `max_log_count`：日志最大条数，设为 `0` 时不按数量清理。
 
 也可以使用环境变量指定其他配置文件：
 
@@ -186,7 +200,28 @@ Mock 上传模式：
 
 后端会处理超时、HTTP 状态码、无效 JSON 和网络异常。
 
-## 日志
+## 上传日志与隐私
+
+前端主导航依次为“工作台”“日志”“设置”。上传成功后，日志页按北京时间
+（UTC+8，精确到秒）倒序显示：
+
+- 上传原图
+- 颜色识别区域图
+- RGB、CIELAB、HEX 和 ROI 参数
+- Camera ID、上传模式和请求 ID
+
+日志数据只保存在本机：
+
+```text
+data/logs/colorvision.db       # SQLite 日志索引，仅包含结构化参数
+data/logs/images/              # 原图和识别区域图
+```
+
+首次启动自动创建 `upload_logs` 表和上述图片目录，不写入任何初始数据。
+应用不会把日志上传到外部服务器；关闭“保存日志图片”后，后续日志只保留
+颜色参数。日志页支持单条删除和全部清空，设置页可配置保留天数与最大条数。
+
+## 运行日志
 
 日志位置：
 
@@ -303,7 +338,7 @@ npm run dev
 
 ```text
 dist/ColorVision/ColorVision.exe
-dist/ColorVision-v1.3.0-win-x64.zip
+dist/ColorVision-v1.4.0-win-x64.zip
 ```
 
 ZIP 文件名自动读取 `backend.__version__`，升级版本后无需手工修改构建脚本。
@@ -333,6 +368,9 @@ ZIP 文件名自动读取 `backend.__version__`，升级版本后无需手工修
 | POST | `/api/camera/capture` | 拍照 |
 | POST | `/api/color/analyze` | ROI 颜色分析 |
 | POST | `/api/upload` | Mock 或真实上传 |
+| GET | `/api/logs` | 分页读取本地上传日志 |
+| DELETE | `/api/logs/{id}` | 删除单条日志及其图片 |
+| DELETE | `/api/logs` | 清空全部日志及图片 |
 | POST | `/api/system/shutdown` | 托管模式优雅退出 |
 
 ## 摄像头故障排查
