@@ -22,6 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import uvicorn
 
+from backend import __version__
 from backend.main import APP_NAME, app
 from backend.runtime import (
     request_shutdown,
@@ -48,19 +49,23 @@ def _application_url(port: int) -> str:
     return f"http://{HOST}:{port}/"
 
 
-def _probe_application(port: int) -> bool:
+def _probe_application(port: int) -> str | None:
     try:
         with urllib.request.urlopen(_health_url(port), timeout=1.0) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except (OSError, ValueError, urllib.error.URLError):
-        return False
+        return None
 
     data = payload.get("data") if isinstance(payload, dict) else None
-    return bool(
-        response.status == 200
-        and isinstance(data, dict)
-        and data.get("app") == APP_NAME
-    )
+    if (
+        response.status != 200
+        or not isinstance(data, dict)
+        or data.get("app") != APP_NAME
+    ):
+        return None
+
+    running_version = data.get("version")
+    return str(running_version) if running_version else "unknown"
 
 
 def _port_is_in_use(port: int) -> bool:
@@ -134,7 +139,25 @@ def main() -> int:
     port = config_data.port or DEFAULT_PORT
     application_url = _application_url(port)
 
-    if _probe_application(port):
+    running_version = _probe_application(port)
+    if running_version is not None:
+        if running_version != __version__:
+            message = (
+                f"检测到 {APP_NAME} 旧版本正在运行。\n\n"
+                f"当前运行版本：{running_version}\n"
+                f"即将启动版本：{__version__}\n\n"
+                "请先关闭旧版本后再启动当前版本。"
+            )
+            logger.error(
+                "%s version mismatch on port %d: running=%s expected=%s",
+                APP_NAME,
+                port,
+                running_version,
+                __version__,
+            )
+            _show_message(message, f"{APP_NAME} 版本冲突", error=True)
+            return 1
+
         logger.info("%s is already running on port %d", APP_NAME, port)
         _open_browser(application_url)
         _show_message(

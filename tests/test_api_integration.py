@@ -16,6 +16,7 @@ from backend.api import upload as upload_api
 from backend.main import app
 from backend.models.config import AppConfig
 from backend.services.camera_service import get_camera_service
+from backend.services.config_service import ConfigService
 from backend.services.upload_service import UploadService
 
 
@@ -149,6 +150,36 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertFalse(payload["success"])
         self.assertIsNone(payload["data"])
         self.assertEqual(payload["code"], "CAMERA_NOT_FOUND")
+
+    def test_config_camera_id_validation_returns_422(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            service = ConfigService(Path(directory) / "config.json")
+            with patch(
+                "backend.api.config.get_config_service",
+                return_value=service,
+            ):
+                valid = self.client.put(
+                    "/api/config",
+                    json={"camera_id": "  CAM-OK  "},
+                )
+                null_value = self.client.put(
+                    "/api/config",
+                    json={"camera_id": None},
+                )
+                empty = self.client.put(
+                    "/api/config",
+                    json={"camera_id": ""},
+                )
+                blank = self.client.put(
+                    "/api/config",
+                    json={"camera_id": "   "},
+                )
+
+        self.assertEqual(valid.status_code, 200, valid.text)
+        self.assertEqual(valid.json()["data"]["camera_id"], "CAM-OK")
+        for response in (null_value, empty, blank):
+            self.assertEqual(response.status_code, 422, response.text)
+            self.assertEqual(response.json()["code"], "INVALID_REQUEST")
 
 
 if __name__ == "__main__":

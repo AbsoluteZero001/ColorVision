@@ -13,6 +13,8 @@ const form = reactive<AppConfig>({
   mock_mode: true,
   timeout: 10,
   port: 8000,
+  image_retention_days: 0,
+  max_image_count: 0,
 });
 
 const loading = ref(true);
@@ -139,6 +141,32 @@ onMounted(loadConfig);
             type="number"
             min="1"
             max="65535"
+            step="1"
+            required
+            :disabled="loading || saving"
+          />
+        </label>
+
+        <label class="field">
+          <span>图片保留天数（0 表示不按时间清理）</span>
+          <input
+            v-model.number="form.image_retention_days"
+            type="number"
+            min="0"
+            max="3650"
+            step="1"
+            required
+            :disabled="loading || saving"
+          />
+        </label>
+
+        <label class="field">
+          <span>最大图片数量（0 表示不按数量清理）</span>
+          <input
+            v-model.number="form.max_image_count"
+            type="number"
+            min="0"
+            max="1000000"
             step="1"
             required
             :disabled="loading || saving"

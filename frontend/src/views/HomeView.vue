@@ -9,6 +9,10 @@ import { captureFrame } from "@/services/camera";
 import { analyzeRoi } from "@/services/color";
 import { apiClient, getApiErrorMessage } from "@/services/api";
 import { uploadResult as sendUpload } from "@/services/upload";
+import {
+  createRecognitionSnapshot,
+  createUploadSnapshot,
+} from "@/services/workflowSnapshots";
 import type { ApiResponse } from "@/types/api";
 import type { CameraStatus, CaptureResult } from "@/types/camera";
 import type {
@@ -60,6 +64,9 @@ function handleCameraStatus(status: CameraStatus): void {
 }
 
 async function handleCapture(): Promise<void> {
+  if (capturing.value || analyzing.value || uploading.value) {
+    return;
+  }
   capturing.value = true;
   errorMessage.value = "";
   try {
@@ -82,6 +89,9 @@ async function handleCapture(): Promise<void> {
 }
 
 function resetCapture(): void {
+  if (analyzing.value || uploading.value) {
+    return;
+  }
   capture.value = null;
   capturedImageBlob.value = null;
   roi.value = null;
@@ -99,18 +109,28 @@ function handleRoiChange(nextRoi: RoiCoordinates | null): void {
 }
 
 async function handleRoiConfirm(nextRoi: RoiCoordinates): Promise<void> {
-  roi.value = nextRoi;
-  if (!capturedImageBlob.value) {
+  if (analyzing.value || uploading.value) {
+    return;
+  }
+  const image = capturedImageBlob.value;
+  if (!image) {
     errorMessage.value = "拍摄图片尚未准备好";
     return;
   }
 
+  const snapshot = createRecognitionSnapshot(image, nextRoi);
+  const shouldAutoUpload = config.value?.auto_upload ?? false;
+  roi.value = snapshot.roi;
   analyzing.value = true;
   errorMessage.value = "";
   try {
-    colorResult.value = await analyzeRoi(capturedImageBlob.value, nextRoi);
-    if (config.value?.auto_upload) {
-      await handleUpload();
+    const result = await analyzeRoi(snapshot.image, snapshot.roi);
+    if (capturedImageBlob.value !== snapshot.image) {
+      return;
+    }
+    colorResult.value = result;
+    if (shouldAutoUpload) {
+      await handleUpload(result);
     }
   } catch (error) {
     colorResult.value = null;
@@ -120,31 +140,46 @@ async function handleRoiConfirm(nextRoi: RoiCoordinates): Promise<void> {
   }
 }
 
-async function handleUpload(): Promise<void> {
+async function handleUpload(
+  resultOverride?: ColorAnalysisResult,
+): Promise<void> {
+  if (uploading.value) {
+    return;
+  }
+  const originalImage = capturedImageBlob.value;
+  const currentCapture = capture.value;
+  const result = resultOverride ?? colorResult.value;
+  const currentConfig = config.value;
   if (
-    !capturedImageBlob.value ||
-    !capture.value ||
-    !colorResult.value ||
-    !config.value
+    !originalImage ||
+    !currentCapture ||
+    !result ||
+    !currentConfig
   ) {
     errorMessage.value = "上传所需的图片、颜色结果或配置不完整";
     return;
   }
 
+  const snapshot = createUploadSnapshot(
+    originalImage,
+    currentCapture,
+    result,
+    currentConfig,
+  );
   uploading.value = true;
   errorMessage.value = "";
   try {
     const roiImage = await createRoiImage(
-      capturedImageBlob.value,
-      colorResult.value.roi,
+      snapshot.originalImage,
+      snapshot.result.roi,
     );
     uploadState.value = await sendUpload({
-      originalImage: capturedImageBlob.value,
+      originalImage: snapshot.originalImage,
       roiImage,
-      result: colorResult.value,
-      cameraId: config.value.camera_id,
-      timestamp: capture.value.captured_at,
-      timeoutMs: config.value.timeout * 1000 + 2_000,
+      result: snapshot.result,
+      cameraId: snapshot.cameraId,
+      timestamp: snapshot.timestamp,
+      timeoutMs: snapshot.timeoutMs,
     });
   } catch (error) {
     uploadState.value = null;
@@ -230,6 +265,7 @@ onMounted(loadConfig);
         :camera-ready="cameraReady"
         :has-capture="Boolean(capture)"
         :capturing="capturing"
+        :locked="analyzing || uploading"
         @capture="handleCapture"
         @retake="resetCapture"
       />
@@ -238,6 +274,7 @@ onMounted(loadConfig);
         :image-url="capture?.image_url"
         :disabled="!capturedImageBlob"
         :analysis-pending="analyzing"
+        :uploading="uploading"
         @change="handleRoiChange"
         @confirm="handleRoiConfirm"
       />

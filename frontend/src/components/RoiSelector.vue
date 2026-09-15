@@ -8,11 +8,13 @@ const props = withDefaults(
     imageUrl?: string | null;
     disabled?: boolean;
     analysisPending?: boolean;
+    uploading?: boolean;
   }>(),
   {
     imageUrl: null,
     disabled: false,
     analysisPending: false,
+    uploading: false,
   },
 );
 
@@ -31,12 +33,15 @@ const roiError = ref("");
 let dragStart: { x: number; y: number } | null = null;
 
 const hasImage = computed(() => Boolean(props.imageUrl));
+const interactionLocked = computed(
+  () => props.disabled || props.analysisPending || props.uploading,
+);
 const canConfirm = computed(
   () =>
     Boolean(roi.value) &&
     (roi.value?.width ?? 0) >= 2 &&
     (roi.value?.height ?? 0) >= 2 &&
-    !props.disabled,
+    !interactionLocked.value,
 );
 
 const selectionStyle = computed(() => {
@@ -71,7 +76,7 @@ function handleImageLoad(): void {
 
 function beginSelection(event: MouseEvent): void {
   if (
-    props.disabled ||
+    interactionLocked.value ||
     !imageElement.value ||
     !naturalWidth.value ||
     !naturalHeight.value ||
@@ -208,7 +213,7 @@ onBeforeUnmount(removeWindowListeners);
             <button
               class="button secondary"
               type="button"
-              :disabled="disabled"
+              :disabled="interactionLocked"
               @click="resetRoi"
             >
               重置

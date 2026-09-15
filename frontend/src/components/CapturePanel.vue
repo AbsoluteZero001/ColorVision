@@ -4,11 +4,13 @@ withDefaults(
     cameraReady?: boolean;
     hasCapture?: boolean;
     capturing?: boolean;
+    locked?: boolean;
   }>(),
   {
     cameraReady: false,
     hasCapture: false,
     capturing: false,
+    locked: false,
   },
 );
 
@@ -28,7 +30,7 @@ const emit = defineEmits<{
       <button
         class="button"
         type="button"
-        :disabled="!cameraReady || capturing"
+        :disabled="!cameraReady || capturing || locked"
         @click="emit('capture')"
       >
         {{ capturing ? "拍摄中" : "拍照" }}
@@ -36,7 +38,7 @@ const emit = defineEmits<{
       <button
         class="button secondary"
         type="button"
-        :disabled="!hasCapture || capturing"
+        :disabled="!hasCapture || capturing || locked"
         @click="emit('retake')"
       >
         重新拍摄

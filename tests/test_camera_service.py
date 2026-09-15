@@ -14,6 +14,7 @@ from backend.services.camera_service import (
     FRAME_VALIDATION_ATTEMPTS,
     FRAME_VALIDATION_COUNT,
     CameraOpenError,
+    CameraOpenFailureKind,
     CameraReadError,
     CameraService,
     RealCameraSource,
@@ -103,7 +104,10 @@ class CameraServiceTests(unittest.TestCase):
             patch.object(
                 RealCameraSource,
                 "start",
-                side_effect=CameraOpenError("camera is busy", busy=True),
+                side_effect=CameraOpenError(
+                    "camera is busy",
+                    kind=CameraOpenFailureKind.DEVICE_BUSY,
+                ),
             ),
         ):
             with self.assertRaises(AppException) as raised:
@@ -113,6 +117,72 @@ class CameraServiceTests(unittest.TestCase):
         status = self.service.get_status()
         self.assertEqual(status.state, CameraState.BUSY)
         self.assertFalse(status.opened)
+
+    def test_open_failure_is_not_reported_as_busy(self) -> None:
+        detected = [CameraInfo(index=0, name="Default Camera", available=True)]
+        with (
+            patch.object(
+                self.service,
+                "_scan_cameras_unlocked",
+                return_value=detected,
+            ),
+            patch.object(
+                RealCameraSource,
+                "start",
+                side_effect=CameraOpenError("camera could not be opened"),
+            ),
+        ):
+            with self.assertRaises(AppException) as raised:
+                self.service.reconnect()
+
+        self.assertEqual(raised.exception.code, ErrorCode.CAMERA_OPEN_FAILED)
+        status = self.service.get_status()
+        self.assertEqual(status.state, CameraState.OPEN_FAILED)
+        self.assertFalse(status.opened)
+
+    def test_driver_error_has_distinct_code(self) -> None:
+        detected = [CameraInfo(index=0, name="Default Camera", available=True)]
+        with (
+            patch.object(
+                self.service,
+                "_scan_cameras_unlocked",
+                return_value=detected,
+            ),
+            patch.object(
+                RealCameraSource,
+                "start",
+                side_effect=CameraOpenError(
+                    "driver failed",
+                    kind=CameraOpenFailureKind.DRIVER_ERROR,
+                ),
+            ),
+        ):
+            with self.assertRaises(AppException) as raised:
+                self.service.reconnect()
+
+        self.assertEqual(raised.exception.code, ErrorCode.CAMERA_DRIVER_ERROR)
+        self.assertEqual(raised.exception.status_code, 503)
+        status = self.service.get_status()
+        self.assertEqual(status.state, CameraState.OPEN_FAILED)
+
+    def test_scan_returns_all_available_cameras(self) -> None:
+        visible_frame = np.full((120, 160, 3), 80, dtype=np.uint8)
+        captures = [
+            FakeCapture([(True, visible_frame)] * FRAME_VALIDATION_ATTEMPTS)
+            for _ in range(3)
+        ]
+        with (
+            patch.object(self.service, "_scan_limit", return_value=3),
+            patch.object(
+                RealCameraSource,
+                "_create_capture",
+                side_effect=captures,
+            ),
+        ):
+            cameras = self.service.list_cameras()
+
+        self.assertEqual([camera.index for camera in cameras], [0, 1, 2])
+        self.assertTrue(all(camera.available for camera in cameras))
 
     def test_open_success_with_failed_reads_is_not_available(self) -> None:
         capture = FakeCapture([(False, None)] * 12)

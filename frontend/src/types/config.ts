@@ -6,6 +6,8 @@ export interface AppConfig {
   mock_mode: boolean;
   timeout: number;
   port: number;
+  image_retention_days: number;
+  max_image_count: number;
 }
 
 export type AppConfigUpdate = Partial<AppConfig>;

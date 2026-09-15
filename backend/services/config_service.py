@@ -44,7 +44,14 @@ class ConfigService:
             current = self._load_unlocked()
             merged = current.model_dump()
             merged.update(update.model_dump(exclude_unset=True, exclude_none=True))
-            updated = AppConfig.model_validate(merged)
+            try:
+                updated = AppConfig.model_validate(merged)
+            except ValidationError as exc:
+                raise AppException(
+                    message="Configuration update is invalid",
+                    code=ErrorCode.INVALID_REQUEST,
+                    status_code=422,
+                ) from exc
             self._write_unlocked(updated)
             logger.info("Configuration updated at %s", self._config_path)
             return updated

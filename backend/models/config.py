@@ -17,6 +17,8 @@ class AppConfig(BaseModel):
     mock_mode: bool = True
     timeout: float = Field(default=10.0, gt=0, le=120)
     port: int = Field(default=8000, ge=1, le=65535)
+    image_retention_days: int = Field(default=0, ge=0, le=3650)
+    max_image_count: int = Field(default=0, ge=0, le=1_000_000)
 
     @field_validator("api_url")
     @classmethod
@@ -47,6 +49,12 @@ class AppConfigUpdate(BaseModel):
     mock_mode: bool | None = None
     timeout: float | None = Field(default=None, gt=0, le=120)
     port: int | None = Field(default=None, ge=1, le=65535)
+    image_retention_days: int | None = Field(default=None, ge=0, le=3650)
+    max_image_count: int | None = Field(
+        default=None,
+        ge=0,
+        le=1_000_000,
+    )
 
     @field_validator("api_url")
     @classmethod
@@ -56,4 +64,14 @@ class AppConfigUpdate(BaseModel):
         normalized = value.strip()
         if not normalized.startswith(("http://", "https://")):
             raise ValueError("api_url must start with http:// or https://")
+        return normalized
+
+    @field_validator("camera_id")
+    @classmethod
+    def validate_camera_id(cls, value: str | None) -> str | None:
+        if value is None:
+            raise ValueError("camera_id must not be null")
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("camera_id must not be empty")
         return normalized

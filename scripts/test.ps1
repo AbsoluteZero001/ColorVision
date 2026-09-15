@@ -34,6 +34,10 @@ if (-not $SkipFrontendBuild) {
     $FrontendRoot = Join-Path $ProjectRoot "frontend"
     Push-Location $FrontendRoot
     try {
+        npm test
+        if ($LASTEXITCODE -ne 0) {
+            throw "Frontend workflow tests failed."
+        }
         npm run build
         if ($LASTEXITCODE -ne 0) {
             throw "Frontend production build failed."

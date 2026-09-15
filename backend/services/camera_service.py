@@ -9,6 +9,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from functools import lru_cache
 from typing import Protocol
 
@@ -48,12 +49,38 @@ class CameraSourceError(RuntimeError):
     """Base error raised by a frame source."""
 
 
+class CameraOpenFailureKind(StrEnum):
+    """Reason a camera could not be opened."""
+
+    DEVICE_BUSY = "device_busy"
+    DEVICE_NOT_FOUND = "device_not_found"
+    DRIVER_ERROR = "driver_error"
+    OPEN_FAILED = "open_failed"
+
+
 class CameraOpenError(CameraSourceError):
     """A frame source could not open its selected device."""
 
-    def __init__(self, message: str, *, busy: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: CameraOpenFailureKind = CameraOpenFailureKind.OPEN_FAILED,
+        busy: bool | None = None,
+    ) -> None:
         super().__init__(message)
-        self.busy = busy
+        if busy is not None:
+            kind = (
+                CameraOpenFailureKind.DEVICE_BUSY
+                if busy
+                else CameraOpenFailureKind.OPEN_FAILED
+            )
+        self.kind = kind
+
+    @property
+    def busy(self) -> bool:
+        """Return whether the source explicitly reported device contention."""
+        return self.kind == CameraOpenFailureKind.DEVICE_BUSY
 
 
 class CameraReadError(CameraSourceError):
@@ -111,17 +138,33 @@ class RealCameraSource:
         if self.is_available():
             return
 
-        capture = self._create_capture(self.index)
+        try:
+            capture = self._create_capture(self.index)
+        except cv2.error as exc:
+            logger.warning("OpenCV failed to create camera capture: %s", exc)
+            raise CameraOpenError(
+                f"Camera {self.index} driver failed",
+                kind=CameraOpenFailureKind.DRIVER_ERROR,
+            ) from exc
+
         if not capture.isOpened():
             capture.release()
             raise CameraOpenError(
                 f"Camera {self.index} is unavailable or already in use",
-                busy=True,
+                kind=CameraOpenFailureKind.OPEN_FAILED,
             )
 
-        capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, DEFAULT_WIDTH)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, DEFAULT_HEIGHT)
+        try:
+            capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, DEFAULT_WIDTH)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, DEFAULT_HEIGHT)
+        except cv2.error as exc:
+            capture.release()
+            logger.warning("OpenCV failed to configure camera: %s", exc)
+            raise CameraOpenError(
+                f"Camera {self.index} driver failed",
+                kind=CameraOpenFailureKind.DRIVER_ERROR,
+            ) from exc
 
         frame = self._read_consecutive_frames(capture)
         if frame is None:
@@ -436,18 +479,40 @@ class CameraService:
                 source.start()
             except CameraOpenError as exc:
                 source.stop()
-                state = CameraState.BUSY if exc.busy else CameraState.OPEN_FAILED
-                code = (
-                    ErrorCode.CAMERA_DEVICE_BUSY
-                    if exc.busy
-                    else ErrorCode.CAMERA_OPEN_FAILED
-                )
+                state_by_kind = {
+                    CameraOpenFailureKind.DEVICE_BUSY: CameraState.BUSY,
+                    CameraOpenFailureKind.DEVICE_NOT_FOUND: CameraState.NOT_FOUND,
+                    CameraOpenFailureKind.DRIVER_ERROR: CameraState.OPEN_FAILED,
+                    CameraOpenFailureKind.OPEN_FAILED: CameraState.OPEN_FAILED,
+                }
+                code_by_kind = {
+                    CameraOpenFailureKind.DEVICE_BUSY: (
+                        ErrorCode.CAMERA_DEVICE_BUSY
+                    ),
+                    CameraOpenFailureKind.DEVICE_NOT_FOUND: (
+                        ErrorCode.CAMERA_NOT_FOUND
+                    ),
+                    CameraOpenFailureKind.DRIVER_ERROR: (
+                        ErrorCode.CAMERA_DRIVER_ERROR
+                    ),
+                    CameraOpenFailureKind.OPEN_FAILED: (
+                        ErrorCode.CAMERA_OPEN_FAILED
+                    ),
+                }
+                status_by_kind = {
+                    CameraOpenFailureKind.DEVICE_BUSY: 409,
+                    CameraOpenFailureKind.DEVICE_NOT_FOUND: 404,
+                    CameraOpenFailureKind.DRIVER_ERROR: 503,
+                    CameraOpenFailureKind.OPEN_FAILED: 409,
+                }
+                state = state_by_kind[exc.kind]
+                code = code_by_kind[exc.kind]
                 logger.error("Failed to open camera %d: %s", target_index, exc)
                 self._set_state(state, message=str(exc), code=code)
                 raise AppException(
                     message=str(exc),
                     code=code,
-                    status_code=409,
+                    status_code=status_by_kind[exc.kind],
                 ) from exc
             except CameraReadError as exc:
                 source.stop()
@@ -600,7 +665,6 @@ class CameraService:
                             available=True,
                         )
                     )
-                    break
                 logger.debug(
                     "Camera index %d ignored because no valid frame sequence "
                     "was available",
