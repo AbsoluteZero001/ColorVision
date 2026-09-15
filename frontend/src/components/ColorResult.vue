@@ -17,7 +17,7 @@ const emit = defineEmits<{
 }>();
 
 const copyState = ref<"idle" | "copied" | "error">("idle");
-const previewColor = computed(() => props.result?.hex ?? "transparent");
+const previewColor = computed(() => props.result?.hex ?? "#f5f8f7");
 const rgbText = computed(() =>
   props.result
     ? `${props.result.rgb.r}, ${props.result.rgb.g}, ${props.result.rgb.b}`
@@ -141,17 +141,7 @@ watch(
   min-height: 130px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background-image:
-    linear-gradient(45deg, #dfe5e3 25%, transparent 25%),
-    linear-gradient(-45deg, #dfe5e3 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #dfe5e3 75%),
-    linear-gradient(-45deg, transparent 75%, #dfe5e3 75%);
-  background-position:
-    0 0,
-    0 8px,
-    8px -8px,
-    -8px 0;
-  background-size: 16px 16px;
+  background: #f5f8f7;
 }
 
 .color-values {

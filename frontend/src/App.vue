@@ -11,7 +11,7 @@ import ApiStatus from "./components/ApiStatus.vue";
         <span class="brand-mark" aria-hidden="true"></span>
         <span>
           <strong>颜色识别系统</strong>
-          <small>V1.2.0</small>
+          <small>V1.3.0</small>
         </span>
       </RouterLink>
 
