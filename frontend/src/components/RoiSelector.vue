@@ -74,31 +74,30 @@ function handleImageLoad(): void {
   resetRoi();
 }
 
-function beginSelection(event: MouseEvent): void {
+function beginSelection(event: PointerEvent): void {
   if (
     interactionLocked.value ||
     !imageElement.value ||
     !naturalWidth.value ||
     !naturalHeight.value ||
-    event.button !== 0
+    !event.isPrimary ||
+    (event.pointerType === "mouse" && event.button !== 0)
   ) {
     return;
   }
 
   event.preventDefault();
+  imageElement.value.setPointerCapture(event.pointerId);
   const point = toOriginalCoordinates(event);
   dragStart = point;
   dragging.value = true;
   roiError.value = "";
   roi.value = { x: point.x, y: point.y, width: 0, height: 0 };
   emit("change", roi.value);
-
-  window.addEventListener("mousemove", updateSelection);
-  window.addEventListener("mouseup", finishSelection);
 }
 
-function updateSelection(event: MouseEvent): void {
-  if (!dragging.value || !dragStart) {
+function updateSelection(event: PointerEvent): void {
+  if (!dragging.value || !dragStart || !event.isPrimary) {
     return;
   }
   const point = toOriginalCoordinates(event);
@@ -111,12 +110,12 @@ function updateSelection(event: MouseEvent): void {
   emit("change", roi.value);
 }
 
-function finishSelection(): void {
+function finishSelection(event: PointerEvent): void {
   if (!dragging.value) {
     return;
   }
   dragging.value = false;
-  removeWindowListeners();
+  releasePointer(event);
   if (!roi.value || roi.value.width < 2 || roi.value.height < 2) {
     roi.value = null;
     roiError.value = "请拖动选择有效的 ROI 区域";
@@ -124,7 +123,25 @@ function finishSelection(): void {
   }
 }
 
-function toOriginalCoordinates(event: MouseEvent): { x: number; y: number } {
+function cancelSelection(event: PointerEvent): void {
+  if (!dragging.value) {
+    return;
+  }
+  dragging.value = false;
+  dragStart = null;
+  roi.value = null;
+  releasePointer(event);
+  emit("change", null);
+}
+
+function releasePointer(event: PointerEvent): void {
+  const element = imageElement.value;
+  if (element && element.hasPointerCapture(event.pointerId)) {
+    element.releasePointerCapture(event.pointerId);
+  }
+}
+
+function toOriginalCoordinates(event: PointerEvent): { x: number; y: number } {
   const element = imageElement.value;
   if (!element || !naturalWidth.value || !naturalHeight.value) {
     return { x: 0, y: 0 };
@@ -147,7 +164,6 @@ function resetRoi(): void {
   dragStart = null;
   roi.value = null;
   roiError.value = "";
-  removeWindowListeners();
   emit("change", null);
 }
 
@@ -160,11 +176,6 @@ function confirmRoi(): void {
   emit("confirm", { ...roi.value });
 }
 
-function removeWindowListeners(): void {
-  window.removeEventListener("mousemove", updateSelection);
-  window.removeEventListener("mouseup", finishSelection);
-}
-
 watch(
   () => props.imageUrl,
   () => {
@@ -174,7 +185,10 @@ watch(
   },
 );
 
-onBeforeUnmount(removeWindowListeners);
+onBeforeUnmount(() => {
+  dragging.value = false;
+  dragStart = null;
+});
 </script>
 
 <template>
@@ -198,7 +212,10 @@ onBeforeUnmount(removeWindowListeners);
             alt="待分析拍摄图片"
             draggable="false"
             @load="handleImageLoad"
-            @mousedown="beginSelection"
+            @pointerdown="beginSelection"
+            @pointermove="updateSelection"
+            @pointerup="finishSelection"
+            @pointercancel="cancelSelection"
           />
           <div
             v-if="roi && roi.width > 0 && roi.height > 0"
@@ -259,7 +276,9 @@ onBeforeUnmount(removeWindowListeners);
   max-width: 100%;
   line-height: 0;
   cursor: crosshair;
+  touch-action: none;
   user-select: none;
+  -webkit-user-select: none;
 }
 
 .capture-image {
@@ -268,6 +287,10 @@ onBeforeUnmount(removeWindowListeners);
   height: auto;
   max-width: 100%;
   max-height: 68vh;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .roi-selection {
