@@ -30,7 +30,24 @@ const roi = ref<RoiCoordinates | null>(null);
 const dragging = ref(false);
 const roiError = ref("");
 
+type DragMode =
+  | "create"
+  | "move"
+  | "n"
+  | "s"
+  | "e"
+  | "w"
+  | "ne"
+  | "nw"
+  | "se"
+  | "sw";
+
+const MIN_ROI_SIZE = 4;
+const HIT_TOLERANCE_PX = 20;
+
+let dragMode: DragMode | null = null;
 let dragStart: { x: number; y: number } | null = null;
+let originRoi: RoiCoordinates | null = null;
 
 const hasImage = computed(() => Boolean(props.imageUrl));
 const interactionLocked = computed(
@@ -39,8 +56,8 @@ const interactionLocked = computed(
 const canConfirm = computed(
   () =>
     Boolean(roi.value) &&
-    (roi.value?.width ?? 0) >= 2 &&
-    (roi.value?.height ?? 0) >= 2 &&
+    (roi.value?.width ?? 0) >= MIN_ROI_SIZE &&
+    (roi.value?.height ?? 0) >= MIN_ROI_SIZE &&
     !interactionLocked.value,
 );
 
@@ -74,6 +91,71 @@ function handleImageLoad(): void {
   resetRoi();
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function hitToleranceNatural(): number {
+  const element = imageElement.value;
+  if (!element || !naturalWidth.value) {
+    return HIT_TOLERANCE_PX;
+  }
+  const bounds = element.getBoundingClientRect();
+  if (!bounds.width) {
+    return HIT_TOLERANCE_PX;
+  }
+  return HIT_TOLERANCE_PX * (naturalWidth.value / bounds.width);
+}
+
+function hitTest(
+  point: { x: number; y: number },
+  current: RoiCoordinates,
+): DragMode | null {
+  const tol = hitToleranceNatural();
+  const left = current.x;
+  const top = current.y;
+  const right = current.x + current.width;
+  const bottom = current.y + current.height;
+
+  const nearLeft = Math.abs(point.x - left) <= tol;
+  const nearRight = Math.abs(point.x - right) <= tol;
+  const nearTop = Math.abs(point.y - top) <= tol;
+  const nearBottom = Math.abs(point.y - bottom) <= tol;
+  const withinX = point.x >= left - tol && point.x <= right + tol;
+  const withinY = point.y >= top - tol && point.y <= bottom + tol;
+  const inside =
+    point.x >= left && point.x <= right && point.y >= top && point.y <= bottom;
+
+  if (nearLeft && nearTop) {
+    return "nw";
+  }
+  if (nearRight && nearTop) {
+    return "ne";
+  }
+  if (nearLeft && nearBottom) {
+    return "sw";
+  }
+  if (nearRight && nearBottom) {
+    return "se";
+  }
+  if (nearLeft && withinY) {
+    return "w";
+  }
+  if (nearRight && withinY) {
+    return "e";
+  }
+  if (nearTop && withinX) {
+    return "n";
+  }
+  if (nearBottom && withinX) {
+    return "s";
+  }
+  if (inside) {
+    return "move";
+  }
+  return null;
+}
+
 function beginSelection(event: PointerEvent): void {
   if (
     interactionLocked.value ||
@@ -92,31 +174,99 @@ function beginSelection(event: PointerEvent): void {
   dragStart = point;
   dragging.value = true;
   roiError.value = "";
-  roi.value = { x: point.x, y: point.y, width: 0, height: 0 };
+
+  const current = roi.value;
+  const mode = current ? hitTest(point, current) : null;
+  if (current && mode) {
+    dragMode = mode;
+    originRoi = { ...current };
+  } else {
+    dragMode = "create";
+    originRoi = null;
+    roi.value = { x: point.x, y: point.y, width: 0, height: 0 };
+  }
   emit("change", roi.value);
 }
 
 function updateSelection(event: PointerEvent): void {
-  if (!dragging.value || !dragStart || !event.isPrimary) {
+  if (!dragging.value || !dragStart || !dragMode || !event.isPrimary) {
     return;
   }
   const point = toOriginalCoordinates(event);
-  roi.value = {
-    x: Math.min(dragStart.x, point.x),
-    y: Math.min(dragStart.y, point.y),
-    width: Math.abs(point.x - dragStart.x),
-    height: Math.abs(point.y - dragStart.y),
-  };
+  if (dragMode === "create") {
+    roi.value = {
+      x: Math.min(dragStart.x, point.x),
+      y: Math.min(dragStart.y, point.y),
+      width: Math.abs(point.x - dragStart.x),
+      height: Math.abs(point.y - dragStart.y),
+    };
+  } else if (dragMode === "move" && originRoi) {
+    const dx = point.x - dragStart.x;
+    const dy = point.y - dragStart.y;
+    roi.value = {
+      ...originRoi,
+      x: clamp(
+        Math.round(originRoi.x + dx),
+        0,
+        naturalWidth.value - originRoi.width,
+      ),
+      y: clamp(
+        Math.round(originRoi.y + dy),
+        0,
+        naturalHeight.value - originRoi.height,
+      ),
+    };
+  } else if (originRoi) {
+    roi.value = resizeRoi(dragMode, point);
+  }
   emit("change", roi.value);
+}
+
+function resizeRoi(
+  mode: DragMode,
+  point: { x: number; y: number },
+): RoiCoordinates {
+  const origin = originRoi;
+  if (!origin) {
+    return { x: point.x, y: point.y, width: 0, height: 0 };
+  }
+  let left = origin.x;
+  let top = origin.y;
+  let right = origin.x + origin.width;
+  let bottom = origin.y + origin.height;
+
+  if (mode.includes("w")) {
+    left = clamp(point.x, 0, right - MIN_ROI_SIZE);
+  }
+  if (mode.includes("e")) {
+    right = clamp(point.x, left + MIN_ROI_SIZE, naturalWidth.value);
+  }
+  if (mode.includes("n")) {
+    top = clamp(point.y, 0, bottom - MIN_ROI_SIZE);
+  }
+  if (mode.includes("s")) {
+    bottom = clamp(point.y, top + MIN_ROI_SIZE, naturalHeight.value);
+  }
+
+  return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
 function finishSelection(event: PointerEvent): void {
   if (!dragging.value) {
     return;
   }
+  const mode = dragMode;
   dragging.value = false;
+  dragMode = null;
+  dragStart = null;
+  originRoi = null;
   releasePointer(event);
-  if (!roi.value || roi.value.width < 2 || roi.value.height < 2) {
+  if (
+    mode === "create" &&
+    (!roi.value ||
+      roi.value.width < MIN_ROI_SIZE ||
+      roi.value.height < MIN_ROI_SIZE)
+  ) {
     roi.value = null;
     roiError.value = "请拖动选择有效的 ROI 区域";
     emit("change", null);
@@ -128,10 +278,17 @@ function cancelSelection(event: PointerEvent): void {
     return;
   }
   dragging.value = false;
+  if (dragMode && dragMode !== "create" && originRoi) {
+    roi.value = { ...originRoi };
+    emit("change", roi.value);
+  } else {
+    roi.value = null;
+    emit("change", null);
+  }
+  dragMode = null;
   dragStart = null;
-  roi.value = null;
+  originRoi = null;
   releasePointer(event);
-  emit("change", null);
 }
 
 function releasePointer(event: PointerEvent): void {
@@ -161,7 +318,9 @@ function toOriginalCoordinates(event: PointerEvent): { x: number; y: number } {
 
 function resetRoi(): void {
   dragging.value = false;
+  dragMode = null;
   dragStart = null;
+  originRoi = null;
   roi.value = null;
   roiError.value = "";
   emit("change", null);
@@ -187,7 +346,9 @@ watch(
 
 onBeforeUnmount(() => {
   dragging.value = false;
+  dragMode = null;
   dragStart = null;
+  originRoi = null;
 });
 </script>
 

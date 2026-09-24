@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 
-import type {
-  CameraInfo,
-  CameraState,
-  CameraStatus,
-} from "@/types/camera";
+import type { CameraState, CameraStatus } from "@/types/camera";
+
+interface BrowserCamera {
+  deviceId: string;
+  label: string;
+}
 
 const props = withDefaults(
   defineProps<{
@@ -22,8 +23,8 @@ const emit = defineEmits<{
   statusChange: [status: CameraStatus];
 }>();
 
-const cameras = ref<CameraInfo[]>([]);
-const selectedIndex = ref<number | null>(null);
+const cameras = ref<BrowserCamera[]>([]);
+const selectedDeviceId = ref<string>("");
 const status = ref<CameraStatus>(
   createStatus("initializing", "摄像头服务初始化中"),
 );
@@ -31,6 +32,10 @@ const busy = ref(false);
 
 const videoRef = ref<HTMLVideoElement | null>(null);
 let mediaStream: MediaStream | null = null;
+
+const isMobileDevice =
+  /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+  (navigator.maxTouchPoints > 1 && /Macintosh/i.test(navigator.userAgent));
 
 const cameraFeedActive = computed(
   () =>
@@ -135,9 +140,6 @@ function createStatus(
 
 function updateStatus(nextStatus: CameraStatus): void {
   status.value = nextStatus;
-  if (nextStatus.index !== null) {
-    selectedIndex.value = nextStatus.index;
-  }
   emit("statusChange", nextStatus);
 }
 
@@ -200,16 +202,17 @@ async function listBrowserCameras(): Promise<void> {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const videoDevices = devices.filter((d) => d.kind === "videoinput");
     cameras.value = videoDevices.map((device, index) => ({
-      index,
-      name: device.label || `Camera ${index + 1}`,
-      available: true,
+      deviceId: device.deviceId,
+      label: device.label || `Camera ${index + 1}`,
     }));
   } catch {
     cameras.value = [];
   }
 }
 
-async function openBrowserCamera(deviceIndex: number | null): Promise<void> {
+async function startStream(
+  getStream: () => Promise<MediaStream>,
+): Promise<void> {
   if (busy.value) {
     return;
   }
@@ -228,17 +231,7 @@ async function openBrowserCamera(deviceIndex: number | null): Promise<void> {
   stopStream();
 
   try {
-    const constraints: MediaStreamConstraints = { video: true };
-    if (deviceIndex !== null) {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter((d) => d.kind === "videoinput");
-      const target = videoDevices[deviceIndex];
-      if (target?.deviceId) {
-        constraints.video = { deviceId: { exact: target.deviceId } };
-      }
-    }
-
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    const stream = await getStream();
     mediaStream = stream;
 
     const videoTrack = stream.getVideoTracks()[0];
@@ -262,7 +255,7 @@ async function openBrowserCamera(deviceIndex: number | null): Promise<void> {
       source: "real",
       camera_id: "CAM-001",
       opened: true,
-      index: deviceIndex ?? 0,
+      index: null,
       name: videoTrack?.label || "Browser Camera",
       available: true,
       width: settings.width ?? null,
@@ -283,7 +276,11 @@ async function openBrowserCamera(deviceIndex: number | null): Promise<void> {
       }
     }
 
+    // 授权后重新枚举，获取完整设备名称
     await listBrowserCameras();
+    if (settings.deviceId) {
+      selectedDeviceId.value = settings.deviceId;
+    }
   } catch (error) {
     handleCameraError(error);
   } finally {
@@ -291,16 +288,56 @@ async function openBrowserCamera(deviceIndex: number | null): Promise<void> {
   }
 }
 
+async function openBrowserCamera(deviceId: string): Promise<void> {
+  await startStream(() =>
+    navigator.mediaDevices.getUserMedia({
+      video: deviceId ? { deviceId: { exact: deviceId } } : true,
+    }),
+  );
+}
+
 async function detectSelected(): Promise<void> {
-  await openBrowserCamera(null);
+  await startStream(async () => {
+    if (isMobileDevice) {
+      // 手机端优先后置主摄，设备不支持时回退到默认摄像头
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+        });
+      } catch (error) {
+        if (
+          error instanceof DOMException &&
+          (error.name === "OverconstrainedError" ||
+            error.name === "NotFoundError")
+        ) {
+          return navigator.mediaDevices.getUserMedia({ video: true });
+        }
+        throw error;
+      }
+    }
+    // 桌面端使用系统默认摄像头
+    return navigator.mediaDevices.getUserMedia({ video: true });
+  });
 }
 
 async function reconnectSelected(): Promise<void> {
-  await openBrowserCamera(selectedIndex.value);
+  await openBrowserCamera(selectedDeviceId.value);
 }
 
 async function openSelected(): Promise<void> {
-  await reconnectSelected();
+  await openBrowserCamera(selectedDeviceId.value);
+}
+
+async function handleCameraChange(): Promise<void> {
+  const target = selectedDeviceId.value;
+  if (!target || !cameraFeedActive.value || busy.value) {
+    return;
+  }
+  const current = mediaStream?.getVideoTracks()[0]?.getSettings().deviceId;
+  if (current === target) {
+    return;
+  }
+  await openBrowserCamera(target);
 }
 
 async function switchToMock(): Promise<void> {
@@ -369,6 +406,7 @@ async function captureFrame(): Promise<Blob> {
 }
 
 onMounted(async () => {
+  await listBrowserCameras();
   await detectSelected();
 });
 
@@ -401,24 +439,25 @@ defineExpose({
           切换真实摄像头
         </button>
         <select
-          v-if="!cameraFeedActive && cameras.length > 0"
-          v-model="selectedIndex"
+          v-if="cameras.length > 0"
+          v-model="selectedDeviceId"
           :disabled="busy"
           aria-label="摄像头"
+          @change="handleCameraChange"
         >
           <option
             v-for="camera in cameras"
-            :key="camera.index"
-            :value="camera.index"
+            :key="camera.deviceId"
+            :value="camera.deviceId"
           >
-            {{ camera.name }}
+            {{ camera.label }}
           </option>
         </select>
         <button
           v-if="!cameraFeedActive && cameras.length > 0"
           class="button compact"
           type="button"
-          :disabled="busy || selectedIndex === null"
+          :disabled="busy || !selectedDeviceId"
           @click="openSelected"
         >
           {{ busy ? "连接中" : "打开" }}
