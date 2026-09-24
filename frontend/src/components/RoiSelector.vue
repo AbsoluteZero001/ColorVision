@@ -24,6 +24,7 @@ const emit = defineEmits<{
 }>();
 
 const imageElement = ref<HTMLImageElement | null>(null);
+const frameElement = ref<HTMLDivElement | null>(null);
 const naturalWidth = ref(0);
 const naturalHeight = ref(0);
 const roi = ref<RoiCoordinates | null>(null);
@@ -44,11 +45,9 @@ type DragMode =
 
 const MIN_ROI_SIZE = 4;
 const HIT_TOLERANCE_PX = 20;
-const TAP_SLOP_PX = 10;
 
 let dragMode: DragMode | null = null;
 let dragStart: { x: number; y: number } | null = null;
-let dragStartClient: { x: number; y: number } | null = null;
 let originRoi: RoiCoordinates | null = null;
 
 const hasImage = computed(() => Boolean(props.imageUrl));
@@ -62,6 +61,29 @@ const canConfirm = computed(
     (roi.value?.height ?? 0) >= MIN_ROI_SIZE &&
     !interactionLocked.value,
 );
+
+const hasRoiSelection = computed(
+  () =>
+    Boolean(roi.value) &&
+    (roi.value?.width ?? 0) > 0 &&
+    (roi.value?.height ?? 0) > 0,
+);
+const hitAreaActive = computed(
+  () => hasRoiSelection.value && !interactionLocked.value,
+);
+
+const hitAreaStyle = computed(() => {
+  if (!roi.value || !naturalWidth.value || !naturalHeight.value) {
+    return {};
+  }
+  const { x, y, width, height } = roi.value;
+  return {
+    left: `calc(${(x / naturalWidth.value) * 100}% - ${HIT_TOLERANCE_PX}px)`,
+    top: `calc(${(y / naturalHeight.value) * 100}% - ${HIT_TOLERANCE_PX}px)`,
+    width: `calc(${(width / naturalWidth.value) * 100}% + ${HIT_TOLERANCE_PX * 2}px)`,
+    height: `calc(${(height / naturalHeight.value) * 100}% + ${HIT_TOLERANCE_PX * 2}px)`,
+  };
+});
 
 const selectionStyle = computed(() => {
   if (!roi.value || naturalWidth.value === 0 || naturalHeight.value === 0) {
@@ -170,16 +192,20 @@ function beginSelection(event: PointerEvent): void {
     return;
   }
 
-  event.preventDefault();
-  imageElement.value.setPointerCapture(event.pointerId);
   const point = toOriginalCoordinates(event);
+  const current = roi.value;
+  const mode = current ? hitTest(point, current) : null;
+  if (current && !mode && event.pointerType !== "mouse") {
+    // 已有选区时，选区外的触屏手势交给浏览器滚动页面
+    return;
+  }
+
+  event.preventDefault();
+  frameElement.value?.setPointerCapture(event.pointerId);
   dragStart = point;
-  dragStartClient = { x: event.clientX, y: event.clientY };
   dragging.value = true;
   roiError.value = "";
 
-  const current = roi.value;
-  const mode = current ? hitTest(point, current) : null;
   if (current && mode) {
     dragMode = mode;
     originRoi = { ...current };
@@ -259,11 +285,9 @@ function finishSelection(event: PointerEvent): void {
     return;
   }
   const mode = dragMode;
-  const startClient = dragStartClient;
   dragging.value = false;
   dragMode = null;
   dragStart = null;
-  dragStartClient = null;
   originRoi = null;
   releasePointer(event);
   if (
@@ -275,23 +299,7 @@ function finishSelection(event: PointerEvent): void {
     roi.value = null;
     roiError.value = "请拖动选择有效的 ROI 区域";
     emit("change", null);
-    return;
   }
-  if (mode === "move" && startClient && isTapGesture(startClient, event)) {
-    // 识别完成后点击已有 ROI：清除选择，便于直接重新框选
-    roi.value = null;
-    emit("change", null);
-  }
-}
-
-function isTapGesture(
-  start: { x: number; y: number },
-  event: PointerEvent,
-): boolean {
-  return (
-    Math.abs(event.clientX - start.x) <= TAP_SLOP_PX &&
-    Math.abs(event.clientY - start.y) <= TAP_SLOP_PX
-  );
 }
 
 function cancelSelection(event: PointerEvent): void {
@@ -308,13 +316,12 @@ function cancelSelection(event: PointerEvent): void {
   }
   dragMode = null;
   dragStart = null;
-  dragStartClient = null;
   originRoi = null;
   releasePointer(event);
 }
 
 function releasePointer(event: PointerEvent): void {
-  const element = imageElement.value;
+  const element = frameElement.value;
   if (element && element.hasPointerCapture(event.pointerId)) {
     element.releasePointerCapture(event.pointerId);
   }
@@ -342,7 +349,6 @@ function resetRoi(): void {
   dragging.value = false;
   dragMode = null;
   dragStart = null;
-  dragStartClient = null;
   originRoi = null;
   roi.value = null;
   roiError.value = "";
@@ -371,7 +377,6 @@ onBeforeUnmount(() => {
   dragging.value = false;
   dragMode = null;
   dragStart = null;
-  dragStartClient = null;
   originRoi = null;
 });
 </script>
@@ -389,7 +394,15 @@ onBeforeUnmount(() => {
         <small>等待拍摄结果</small>
       </div>
       <template v-else>
-        <div class="image-frame">
+        <div
+          ref="frameElement"
+          class="image-frame"
+          :class="{ 'has-roi': hasRoiSelection }"
+          @pointerdown="beginSelection"
+          @pointermove="updateSelection"
+          @pointerup="finishSelection"
+          @pointercancel="cancelSelection"
+        >
           <img
             ref="imageElement"
             class="capture-image"
@@ -397,15 +410,17 @@ onBeforeUnmount(() => {
             alt="待分析拍摄图片"
             draggable="false"
             @load="handleImageLoad"
-            @pointerdown="beginSelection"
-            @pointermove="updateSelection"
-            @pointerup="finishSelection"
-            @pointercancel="cancelSelection"
           />
           <div
-            v-if="roi && roi.width > 0 && roi.height > 0"
+            v-if="hasRoiSelection"
             class="roi-selection"
             :style="selectionStyle"
+            aria-hidden="true"
+          ></div>
+          <div
+            v-if="hitAreaActive"
+            class="roi-hit-area"
+            :style="hitAreaStyle"
             aria-hidden="true"
           ></div>
         </div>
@@ -464,6 +479,16 @@ onBeforeUnmount(() => {
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
+  overflow: hidden;
+}
+
+/* 已有选区：选区外放行纵向滚动，选区内由 .roi-hit-area 接管 */
+.image-frame.has-roi {
+  touch-action: pan-y;
+}
+
+.image-frame.has-roi .capture-image {
+  touch-action: pan-y;
 }
 
 .capture-image {
@@ -476,6 +501,13 @@ onBeforeUnmount(() => {
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
+}
+
+.roi-hit-area {
+  position: absolute;
+  z-index: 1;
+  cursor: move;
+  touch-action: none;
 }
 
 .roi-selection {
