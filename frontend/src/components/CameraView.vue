@@ -37,6 +37,23 @@ const isMobileDevice =
   /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
   (navigator.maxTouchPoints > 1 && /Macintosh/i.test(navigator.userAgent));
 
+const VIRTUAL_CAMERA_KEYWORDS = [
+  "virtualcamera",
+  "virtual camera",
+  "obs virtual",
+  "webcastmate",
+  "manycam",
+  "droidcam virtual",
+  "xsplit",
+];
+
+function isVirtualCamera(label: string): boolean {
+  const normalized = label.toLowerCase();
+  return VIRTUAL_CAMERA_KEYWORDS.some((keyword) =>
+    normalized.includes(keyword),
+  );
+}
+
 const cameraFeedActive = computed(
   () =>
     status.value.opened &&
@@ -200,14 +217,69 @@ async function listBrowserCameras(): Promise<void> {
       return;
     }
     const devices = await navigator.mediaDevices.enumerateDevices();
-    const videoDevices = devices.filter((d) => d.kind === "videoinput");
+    const videoDevices = devices
+      .filter((d) => d.kind === "videoinput")
+      .filter((d) => !isVirtualCamera(d.label));
     cameras.value = videoDevices.map((device, index) => ({
       deviceId: device.deviceId,
       label: device.label || `Camera ${index + 1}`,
     }));
+    if (
+      cameras.value.length > 0 &&
+      !cameras.value.some((c) => c.deviceId === selectedDeviceId.value)
+    ) {
+      selectedDeviceId.value = cameras.value[0].deviceId;
+    }
   } catch {
     cameras.value = [];
   }
+}
+
+async function applyStream(stream: MediaStream): Promise<MediaTrackSettings> {
+  mediaStream = stream;
+
+  const videoTrack = stream.getVideoTracks()[0];
+  const settings = videoTrack ? videoTrack.getSettings() : {};
+  videoTrack.onended = () => {
+    if (!mediaStream) {
+      return;
+    }
+    updateStatus({
+      ...status.value,
+      state: "disconnected",
+      opened: false,
+      available: false,
+      message: "摄像头已断开",
+      code: "CAMERA_DISCONNECTED",
+    });
+  };
+
+  updateStatus({
+    state: "available",
+    source: "real",
+    camera_id: "CAM-001",
+    opened: true,
+    index: null,
+    name: videoTrack?.label || "Browser Camera",
+    available: true,
+    width: settings.width ?? null,
+    height: settings.height ?? null,
+    fps: settings.frameRate ?? null,
+    message: null,
+    code: null,
+  });
+
+  await nextTick();
+  const video = videoRef.value;
+  if (video) {
+    video.srcObject = stream;
+    try {
+      await video.play();
+    } catch {
+      // Autoplay may be rejected by the browser; the video element still renders frames.
+    }
+  }
+  return settings;
 }
 
 async function startStream(
@@ -231,55 +303,28 @@ async function startStream(
   stopStream();
 
   try {
-    const stream = await getStream();
-    mediaStream = stream;
+    let settings = await applyStream(await getStream());
 
-    const videoTrack = stream.getVideoTracks()[0];
-    const settings = videoTrack ? videoTrack.getSettings() : {};
-    videoTrack.onended = () => {
-      if (!mediaStream) {
-        return;
-      }
-      updateStatus({
-        ...status.value,
-        state: "disconnected",
-        opened: false,
-        available: false,
-        message: "摄像头已断开",
-        code: "CAMERA_DISCONNECTED",
-      });
-    };
-
-    updateStatus({
-      state: "available",
-      source: "real",
-      camera_id: "CAM-001",
-      opened: true,
-      index: null,
-      name: videoTrack?.label || "Browser Camera",
-      available: true,
-      width: settings.width ?? null,
-      height: settings.height ?? null,
-      fps: settings.frameRate ?? null,
-      message: null,
-      code: null,
-    });
-
-    await nextTick();
-    const video = videoRef.value;
-    if (video) {
-      video.srcObject = stream;
-      try {
-        await video.play();
-      } catch {
-        // Autoplay may be rejected by the browser; the video element still renders frames.
-      }
-    }
-
-    // 授权后重新枚举，获取完整设备名称
+    // 授权后重新枚举，获取完整设备名称（此时才能识别虚拟摄像头 label）
     await listBrowserCameras();
-    if (settings.deviceId) {
-      selectedDeviceId.value = settings.deviceId;
+
+    let activeId = settings.deviceId ?? "";
+    if (
+      cameras.value.length > 0 &&
+      !cameras.value.some((c) => c.deviceId === activeId)
+    ) {
+      // 默认打开的设备被识别为虚拟摄像头，自动切换到第一个物理摄像头
+      const target = cameras.value[0].deviceId;
+      stopStream();
+      settings = await applyStream(
+        await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { exact: target } },
+        }),
+      );
+      activeId = settings.deviceId ?? target;
+    }
+    if (activeId) {
+      selectedDeviceId.value = activeId;
     }
   } catch (error) {
     handleCameraError(error);
@@ -439,7 +484,7 @@ defineExpose({
           切换真实摄像头
         </button>
         <select
-          v-if="cameras.length > 0"
+          v-if="cameras.length > 1"
           v-model="selectedDeviceId"
           :disabled="busy"
           aria-label="摄像头"
