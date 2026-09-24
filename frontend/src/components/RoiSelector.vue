@@ -29,6 +29,7 @@ const naturalHeight = ref(0);
 const roi = ref<RoiCoordinates | null>(null);
 const dragging = ref(false);
 const roiError = ref("");
+const roiLocked = ref(false);
 
 type DragMode =
   | "create"
@@ -51,7 +52,11 @@ let originRoi: RoiCoordinates | null = null;
 
 const hasImage = computed(() => Boolean(props.imageUrl));
 const interactionLocked = computed(
-  () => props.disabled || props.analysisPending || props.uploading,
+  () =>
+    props.disabled ||
+    props.analysisPending ||
+    props.uploading ||
+    roiLocked.value,
 );
 const canConfirm = computed(
   () =>
@@ -59,6 +64,9 @@ const canConfirm = computed(
     (roi.value?.width ?? 0) >= MIN_ROI_SIZE &&
     (roi.value?.height ?? 0) >= MIN_ROI_SIZE &&
     !interactionLocked.value,
+);
+const resetDisabled = computed(
+  () => props.disabled || props.analysisPending || props.uploading,
 );
 
 const selectionStyle = computed(() => {
@@ -323,6 +331,7 @@ function resetRoi(): void {
   originRoi = null;
   roi.value = null;
   roiError.value = "";
+  roiLocked.value = false;
   emit("change", null);
 }
 
@@ -332,6 +341,8 @@ function confirmRoi(): void {
     return;
   }
   roiError.value = "";
+  // 识别确认后锁定 ROI 交互，避免遮挡页面滚动；点“重置”后恢复
+  roiLocked.value = true;
   emit("confirm", { ...roi.value });
 }
 
@@ -365,7 +376,7 @@ onBeforeUnmount(() => {
         <small>等待拍摄结果</small>
       </div>
       <template v-else>
-        <div class="image-frame">
+        <div class="image-frame" :class="{ 'roi-locked': roiLocked }">
           <img
             ref="imageElement"
             class="capture-image"
@@ -391,7 +402,7 @@ onBeforeUnmount(() => {
             <button
               class="button secondary"
               type="button"
-              :disabled="interactionLocked"
+              :disabled="resetDisabled"
               @click="resetRoi"
             >
               重置
@@ -452,6 +463,16 @@ onBeforeUnmount(() => {
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
+}
+
+/* 识别完成后锁定 ROI：恢复页面滚动，点击“重置”后解除 */
+.image-frame.roi-locked {
+  cursor: default;
+  touch-action: auto;
+}
+
+.image-frame.roi-locked .capture-image {
+  touch-action: auto;
 }
 
 .roi-selection {

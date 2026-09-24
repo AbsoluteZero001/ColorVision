@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import {
   captureFrame as captureMockFrame,
@@ -37,6 +37,16 @@ const busy = ref(false);
 
 const videoRef = ref<HTMLVideoElement | null>(null);
 let mediaStream: MediaStream | null = null;
+let resizeObserver: ResizeObserver | null = null;
+
+// 以下参数全部来自浏览器真实 API，未提供时保持空值，UI 显示 “--”
+const sourceWidth = ref(0);
+const sourceHeight = ref(0);
+const frameRate = ref<number | null>(null);
+const facingMode = ref<string | null>(null);
+const capabilitiesText = ref("");
+const previewWidth = ref(0);
+const previewHeight = ref(0);
 
 const isMobileDevice =
   /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
@@ -69,10 +79,53 @@ const resolutionText = computed(() => {
   if (!cameraFeedActive.value) {
     return status.value.name || "未连接";
   }
-  if (!status.value.width || !status.value.height) {
+  if (!sourceWidth.value || !sourceHeight.value) {
     return "分辨率读取中";
   }
-  return `${status.value.width} × ${status.value.height}`;
+  return `${sourceWidth.value} × ${sourceHeight.value}`;
+});
+
+function gcd(a: number, b: number): number {
+  return b === 0 ? a : gcd(b, a);
+}
+
+const deviceNameText = computed(() => status.value.name || "--");
+
+const sourceSizeText = computed(() =>
+  sourceWidth.value && sourceHeight.value
+    ? `${sourceWidth.value} × ${sourceHeight.value} px`
+    : "--",
+);
+
+const previewSizeText = computed(() =>
+  previewWidth.value && previewHeight.value
+    ? `${previewWidth.value} × ${previewHeight.value} px`
+    : "--",
+);
+
+const fpsText = computed(() =>
+  frameRate.value ? `${Math.round(frameRate.value)} FPS` : "--",
+);
+
+const aspectRatioText = computed(() => {
+  if (!sourceWidth.value || !sourceHeight.value) {
+    return "--";
+  }
+  const divisor = gcd(sourceWidth.value, sourceHeight.value);
+  return `${sourceWidth.value / divisor}:${sourceHeight.value / divisor}`;
+});
+
+const facingText = computed(() => {
+  if (facingMode.value === "environment") {
+    return "后置";
+  }
+  if (facingMode.value === "user") {
+    return "前置";
+  }
+  if (facingMode.value === "left" || facingMode.value === "right") {
+    return facingMode.value;
+  }
+  return "未知";
 });
 
 const statusTitle = computed(() => {
@@ -224,6 +277,63 @@ function stopStream(): void {
   if (video) {
     video.srcObject = null;
   }
+  // 清空上一设备参数，避免切换后残留旧数据
+  sourceWidth.value = 0;
+  sourceHeight.value = 0;
+  frameRate.value = null;
+  facingMode.value = null;
+  capabilitiesText.value = "";
+  previewWidth.value = 0;
+  previewHeight.value = 0;
+}
+
+interface ExtendedTrackCapabilities extends MediaTrackCapabilities {
+  zoom?: { min: number; max: number };
+  focusMode?: string[];
+}
+
+function buildCapabilitiesText(
+  capabilities: MediaTrackCapabilities | undefined,
+): string {
+  if (!capabilities) {
+    return "";
+  }
+  const caps = capabilities as ExtendedTrackCapabilities;
+  const parts: string[] = [];
+  if (caps.width?.max && caps.height?.max) {
+    parts.push(`最大 ${caps.width.max} × ${caps.height.max}`);
+  }
+  if (caps.frameRate?.max) {
+    parts.push(`最高 ${Math.round(caps.frameRate.max)} FPS`);
+  }
+  if (caps.zoom) {
+    parts.push(`变焦 ${caps.zoom.min} - ${caps.zoom.max}`);
+  }
+  if (caps.focusMode?.length) {
+    parts.push(`对焦 ${caps.focusMode.join(" / ")}`);
+  }
+  return parts.join("  ·  ");
+}
+
+function updatePreviewSize(): void {
+  const video = videoRef.value;
+  if (!video || !showLiveVideo.value) {
+    return;
+  }
+  const rect = video.getBoundingClientRect();
+  previewWidth.value = Math.round(rect.width);
+  previewHeight.value = Math.round(rect.height);
+}
+
+function handleVideoMetadata(): void {
+  const video = videoRef.value;
+  if (!video) {
+    return;
+  }
+  // 摄像头原始像素以 video 元素实际解码尺寸为准
+  sourceWidth.value = video.videoWidth;
+  sourceHeight.value = video.videoHeight;
+  updatePreviewSize();
 }
 
 async function listBrowserCameras(): Promise<void> {
@@ -236,9 +346,10 @@ async function listBrowserCameras(): Promise<void> {
     const videoDevices = devices
       .filter((d) => d.kind === "videoinput")
       .filter((d) => !isVirtualCamera(d.label));
-    cameras.value = videoDevices.map((device, index) => ({
+    cameras.value = videoDevices.map((device) => ({
       deviceId: device.deviceId,
-      label: device.label || `Camera ${index + 1}`,
+      // 授权前 label 可能为空；不做人工编号，统一回退为 "Camera"
+      label: device.label || "Camera",
     }));
     if (
       cameras.value.length > 0 &&
@@ -256,6 +367,13 @@ async function applyStream(stream: MediaStream): Promise<MediaTrackSettings> {
 
   const videoTrack = stream.getVideoTracks()[0];
   const settings = videoTrack ? videoTrack.getSettings() : {};
+  const capabilities = videoTrack?.getCapabilities?.();
+
+  // 每次打开/切换都重新读取真实参数，不保留上一设备数据
+  frameRate.value = settings.frameRate ?? null;
+  facingMode.value = settings.facingMode ?? null;
+  capabilitiesText.value = buildCapabilitiesText(capabilities);
+
   videoTrack.onended = () => {
     if (!mediaStream) {
       return;
@@ -276,11 +394,11 @@ async function applyStream(stream: MediaStream): Promise<MediaTrackSettings> {
     camera_id: "CAM-001",
     opened: true,
     index: null,
-    name: videoTrack?.label || "Browser Camera",
+    name: videoTrack?.label || "",
     available: true,
-    width: settings.width ?? null,
-    height: settings.height ?? null,
-    fps: settings.frameRate ?? null,
+    width: null,
+    height: null,
+    fps: null,
     message: null,
     code: null,
   });
@@ -289,8 +407,11 @@ async function applyStream(stream: MediaStream): Promise<MediaTrackSettings> {
   const video = videoRef.value;
   if (video) {
     video.srcObject = stream;
+    video.onloadedmetadata = () => handleVideoMetadata();
     try {
       await video.play();
+      // 若 loadedmetadata 已触发则补一次
+      handleVideoMetadata();
     } catch {
       // Autoplay may be rejected by the browser; the video element still renders frames.
     }
@@ -497,14 +618,30 @@ async function captureFrame(): Promise<Blob> {
 }
 
 onMounted(async () => {
+  window.addEventListener("resize", updatePreviewSize);
+  window.addEventListener("orientationchange", updatePreviewSize);
+  if (typeof ResizeObserver !== "undefined" && videoRef.value) {
+    resizeObserver = new ResizeObserver(() => updatePreviewSize());
+    resizeObserver.observe(videoRef.value);
+  }
   await listBrowserCameras();
   await detectSelected();
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("resize", updatePreviewSize);
+  window.removeEventListener("orientationchange", updatePreviewSize);
+  resizeObserver?.disconnect();
+  resizeObserver = null;
   stopStream();
   if (status.value.state === "mock") {
     closeCamera().catch(() => undefined);
+  }
+});
+
+watch(showLiveVideo, (visible) => {
+  if (visible) {
+    void nextTick(() => updatePreviewSize());
   }
 });
 
@@ -579,7 +716,18 @@ defineExpose({
       </span>
     </div>
 
+    <div v-if="status.state === 'available'" class="camera-metrics">
+      <span>设备：{{ deviceNameText }}</span>
+      <span>视频源：{{ sourceSizeText }}</span>
+      <span>预览区域：{{ previewSizeText }}</span>
+      <span>帧率：{{ fpsText }}</span>
+      <span>比例：{{ aspectRatioText }}</span>
+      <span>方向：{{ facingText }}</span>
+      <span v-if="capabilitiesText">能力：{{ capabilitiesText }}</span>
+    </div>
+
     <div class="camera-stage" aria-label="摄像头预览区域">
+      <span v-if="showLiveVideo" class="live-badge" aria-hidden="true">LIVE</span>
       <video
         v-show="showLiveVideo"
         ref="videoRef"
@@ -744,11 +892,51 @@ defineExpose({
   background-size: 28px 28px;
 }
 
+/* 元素尺寸即内容显示尺寸，边框严格贴合实际画面，object-fit 保证不变形 */
 .camera-image {
   display: block;
-  width: 100%;
+  width: auto;
+  max-width: 100%;
+  height: auto;
   max-height: 68vh;
   object-fit: contain;
+  border: 1px solid rgba(105, 210, 197, 0.35);
+  border-radius: 8px;
+  background: #101716;
+}
+
+.live-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  padding: 3px 10px;
+  border-radius: 999px;
+  color: #0f1716;
+  background: #69d2c5;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+}
+
+.camera-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--surface-muted);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.camera-metrics span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .camera-empty {
@@ -805,6 +993,15 @@ defineExpose({
 
   .camera-status-code {
     display: none;
+  }
+
+  .camera-metrics {
+    gap: 2px 12px;
+    font-size: 0.7rem;
+  }
+
+  .camera-metrics span {
+    max-width: 100%;
   }
 }
 
