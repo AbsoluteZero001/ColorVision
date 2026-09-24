@@ -38,6 +38,11 @@ const busy = ref(false);
 const videoRef = ref<HTMLVideoElement | null>(null);
 let mediaStream: MediaStream | null = null;
 
+// 摄像头真实参数，取不到时保持空值，界面上对应项不显示
+const videoResolution = ref<{ width: number; height: number } | null>(null);
+const trackFrameRate = ref<number | null>(null);
+const trackFacingMode = ref<string | null>(null);
+
 const isMobileDevice =
   /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
   (navigator.maxTouchPoints > 1 && /Macintosh/i.test(navigator.userAgent));
@@ -65,14 +70,26 @@ const cameraFeedActive = computed(
     (status.value.state === "available" || status.value.state === "mock"),
 );
 
-const resolutionText = computed(() => {
+const cameraParamsText = computed(() => {
   if (!cameraFeedActive.value) {
     return status.value.name || "未连接";
   }
-  if (!status.value.width || !status.value.height) {
-    return "分辨率读取中";
+  const parts: string[] = [];
+  const width = videoResolution.value?.width ?? status.value.width;
+  const height = videoResolution.value?.height ?? status.value.height;
+  if (width && height) {
+    parts.push(`${width} × ${height}`);
   }
-  return `${status.value.width} × ${status.value.height}`;
+  const fps = trackFrameRate.value ?? status.value.fps;
+  if (fps) {
+    parts.push(`${Math.round(fps)} FPS`);
+  }
+  if (trackFacingMode.value === "environment") {
+    parts.push("后置");
+  } else if (trackFacingMode.value === "user") {
+    parts.push("前置");
+  }
+  return parts.join(" · ");
 });
 
 const statusTitle = computed(() => {
@@ -224,6 +241,20 @@ function stopStream(): void {
   if (video) {
     video.srcObject = null;
   }
+  videoResolution.value = null;
+  trackFrameRate.value = null;
+  trackFacingMode.value = null;
+}
+
+function handleVideoMetadata(): void {
+  const video = videoRef.value;
+  if (!video || !video.videoWidth || !video.videoHeight) {
+    return;
+  }
+  videoResolution.value = {
+    width: video.videoWidth,
+    height: video.videoHeight,
+  };
 }
 
 async function listBrowserCameras(): Promise<void> {
@@ -256,6 +287,12 @@ async function applyStream(stream: MediaStream): Promise<MediaTrackSettings> {
 
   const videoTrack = stream.getVideoTracks()[0];
   const settings = videoTrack ? videoTrack.getSettings() : {};
+  trackFrameRate.value = settings.frameRate ?? null;
+  trackFacingMode.value = settings.facingMode ?? null;
+  videoResolution.value =
+    settings.width && settings.height
+      ? { width: settings.width, height: settings.height }
+      : null;
   videoTrack.onended = () => {
     if (!mediaStream) {
       return;
@@ -520,7 +557,7 @@ defineExpose({
     <div class="panel-header camera-toolbar">
       <div>
         <h2>实时画面</h2>
-        <span class="muted">{{ resolutionText }}</span>
+        <span class="muted">{{ cameraParamsText }}</span>
       </div>
       <div class="camera-controls">
         <button
@@ -588,6 +625,8 @@ defineExpose({
         playsinline
         muted
         aria-label="摄像头实时画面"
+        @loadedmetadata="handleVideoMetadata"
+        @resize="handleVideoMetadata"
       ></video>
       <img
         v-if="mockStreamUrl"

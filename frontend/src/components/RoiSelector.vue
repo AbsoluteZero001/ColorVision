@@ -44,9 +44,11 @@ type DragMode =
 
 const MIN_ROI_SIZE = 4;
 const HIT_TOLERANCE_PX = 20;
+const TAP_SLOP_PX = 10;
 
 let dragMode: DragMode | null = null;
 let dragStart: { x: number; y: number } | null = null;
+let dragStartClient: { x: number; y: number } | null = null;
 let originRoi: RoiCoordinates | null = null;
 
 const hasImage = computed(() => Boolean(props.imageUrl));
@@ -172,6 +174,7 @@ function beginSelection(event: PointerEvent): void {
   imageElement.value.setPointerCapture(event.pointerId);
   const point = toOriginalCoordinates(event);
   dragStart = point;
+  dragStartClient = { x: event.clientX, y: event.clientY };
   dragging.value = true;
   roiError.value = "";
 
@@ -256,9 +259,11 @@ function finishSelection(event: PointerEvent): void {
     return;
   }
   const mode = dragMode;
+  const startClient = dragStartClient;
   dragging.value = false;
   dragMode = null;
   dragStart = null;
+  dragStartClient = null;
   originRoi = null;
   releasePointer(event);
   if (
@@ -270,7 +275,23 @@ function finishSelection(event: PointerEvent): void {
     roi.value = null;
     roiError.value = "请拖动选择有效的 ROI 区域";
     emit("change", null);
+    return;
   }
+  if (mode === "move" && startClient && isTapGesture(startClient, event)) {
+    // 识别完成后点击已有 ROI：清除选择，便于直接重新框选
+    roi.value = null;
+    emit("change", null);
+  }
+}
+
+function isTapGesture(
+  start: { x: number; y: number },
+  event: PointerEvent,
+): boolean {
+  return (
+    Math.abs(event.clientX - start.x) <= TAP_SLOP_PX &&
+    Math.abs(event.clientY - start.y) <= TAP_SLOP_PX
+  );
 }
 
 function cancelSelection(event: PointerEvent): void {
@@ -287,6 +308,7 @@ function cancelSelection(event: PointerEvent): void {
   }
   dragMode = null;
   dragStart = null;
+  dragStartClient = null;
   originRoi = null;
   releasePointer(event);
 }
@@ -320,6 +342,7 @@ function resetRoi(): void {
   dragging.value = false;
   dragMode = null;
   dragStart = null;
+  dragStartClient = null;
   originRoi = null;
   roi.value = null;
   roiError.value = "";
@@ -348,6 +371,7 @@ onBeforeUnmount(() => {
   dragging.value = false;
   dragMode = null;
   dragStart = null;
+  dragStartClient = null;
   originRoi = null;
 });
 </script>
