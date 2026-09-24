@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 
+import {
+  captureFrame as captureMockFrame,
+  closeCamera,
+  useMockCamera,
+} from "@/services/camera";
 import type { CameraState, CameraStatus } from "@/types/camera";
 
 interface BrowserCamera {
@@ -123,15 +128,26 @@ const retryLabel = computed(() =>
 );
 
 const showLiveVideo = computed(
-  () => cameraFeedActive.value && !props.frozen,
+  () => status.value.state === "available" && !props.frozen,
 );
 
 const showFrozenImage = computed(
   () => props.frozen && Boolean(props.capturedImageUrl),
 );
 
+const mockStreamFailed = ref(false);
+const mockStreamSession = ref(0);
+
+const mockStreamUrl = computed(() => {
+  if (status.value.state !== "mock" || props.frozen || mockStreamFailed.value) {
+    return "";
+  }
+  return `/api/camera/stream?session=${mockStreamSession.value}`;
+});
+
 const showEmptyState = computed(
-  () => !showLiveVideo.value && !showFrozenImage.value,
+  () =>
+    !showLiveVideo.value && !showFrozenImage.value && !mockStreamUrl.value,
 );
 
 function createStatus(
@@ -389,25 +405,28 @@ async function switchToMock(): Promise<void> {
   if (busy.value) {
     return;
   }
-  stopStream();
-  updateStatus({
-    state: "mock",
-    source: "mock",
-    camera_id: "MOCK-CAMERA",
-    opened: true,
-    index: null,
-    name: "Mock Camera",
-    available: true,
-    width: null,
-    height: null,
-    fps: null,
-    message: "Mock 模式在浏览器部署下不提供实时画面",
-    code: null,
-  });
-  await listBrowserCameras();
+  busy.value = true;
+  try {
+    stopStream();
+    const nextStatus = await useMockCamera();
+    mockStreamFailed.value = false;
+    mockStreamSession.value += 1;
+    updateStatus(nextStatus);
+  } catch (error) {
+    handleCameraError(error);
+  } finally {
+    busy.value = false;
+  }
 }
 
 async function switchToReal(): Promise<void> {
+  if (status.value.state === "mock") {
+    try {
+      await closeCamera();
+    } catch {
+      // 忽略服务器 Mock 关闭失败
+    }
+  }
   await reconnectSelected();
 }
 
@@ -417,6 +436,13 @@ async function closeSelected(): Promise<void> {
   }
   busy.value = true;
   try {
+    if (status.value.state === "mock") {
+      try {
+        await closeCamera();
+      } catch {
+        // 忽略服务器 Mock 关闭失败
+      }
+    }
     stopStream();
     updateStatus(createStatus("closed", "摄像头已关闭"));
   } finally {
@@ -424,11 +450,31 @@ async function closeSelected(): Promise<void> {
   }
 }
 
+function handleMockStreamError(): void {
+  if (props.frozen) {
+    return;
+  }
+  mockStreamFailed.value = true;
+}
+
 async function restartPreview(): Promise<void> {
+  if (status.value.state === "mock") {
+    mockStreamFailed.value = false;
+    mockStreamSession.value += 1;
+    return;
+  }
   await detectSelected();
 }
 
 async function captureFrame(): Promise<Blob> {
+  if (status.value.state === "mock") {
+    const result = await captureMockFrame();
+    const response = await fetch(result.image_url);
+    if (!response.ok) {
+      throw new Error("拍摄图片无法加载");
+    }
+    return response.blob();
+  }
   const video = videoRef.value;
   if (!video || !video.videoWidth || !video.videoHeight) {
     throw new Error("摄像头画面尚未就绪");
@@ -457,6 +503,9 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   stopStream();
+  if (status.value.state === "mock") {
+    closeCamera().catch(() => undefined);
+  }
 });
 
 defineExpose({
@@ -541,6 +590,13 @@ defineExpose({
         aria-label="摄像头实时画面"
       ></video>
       <img
+        v-if="mockStreamUrl"
+        :src="mockStreamUrl"
+        class="camera-image"
+        alt="Mock 测试画面"
+        @error="handleMockStreamError"
+      />
+      <img
         v-if="showFrozenImage"
         :src="props.capturedImageUrl ?? ''"
         class="camera-image"
@@ -570,7 +626,7 @@ defineExpose({
             使用 Mock 模式
           </button>
           <button
-            v-if="status.state === 'disconnected'"
+            v-if="status.state === 'disconnected' || mockStreamFailed"
             class="button compact"
             type="button"
             :disabled="busy"
