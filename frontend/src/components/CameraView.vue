@@ -1,15 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 
-import {
-  closeCamera,
-  detectCamera,
-  getCameraStatus,
-  listCameras,
-  reconnectCamera,
-  useMockCamera,
-} from "@/services/camera";
-import { getApiErrorDetails } from "@/services/api";
 import type {
   CameraInfo,
   CameraState,
@@ -37,30 +28,15 @@ const status = ref<CameraStatus>(
   createStatus("initializing", "摄像头服务初始化中"),
 );
 const busy = ref(false);
-const streamSession = ref(0);
-const streamFailed = ref(false);
 
-let statusPollTimer: number | null = null;
+const videoRef = ref<HTMLVideoElement | null>(null);
+let mediaStream: MediaStream | null = null;
 
 const cameraFeedActive = computed(
   () =>
     status.value.opened &&
     (status.value.state === "available" || status.value.state === "mock"),
 );
-
-const streamUrl = computed(() => {
-  if (!cameraFeedActive.value || props.frozen || streamFailed.value) {
-    return "";
-  }
-  return `/api/camera/stream?session=${streamSession.value}`;
-});
-
-const displayImageUrl = computed(() => {
-  if (props.frozen && props.capturedImageUrl) {
-    return props.capturedImageUrl;
-  }
-  return streamUrl.value;
-});
 
 const resolutionText = computed(() => {
   if (!cameraFeedActive.value) {
@@ -124,6 +100,18 @@ const retryLabel = computed(() =>
   status.value.state === "disconnected" ? "重新连接" : "重新检测",
 );
 
+const showLiveVideo = computed(
+  () => cameraFeedActive.value && !props.frozen,
+);
+
+const showFrozenImage = computed(
+  () => props.frozen && Boolean(props.capturedImageUrl),
+);
+
+const showEmptyState = computed(
+  () => !showLiveVideo.value && !showFrozenImage.value,
+);
+
 function createStatus(
   state: CameraState,
   message: string | null = null,
@@ -150,44 +138,152 @@ function updateStatus(nextStatus: CameraStatus): void {
   if (nextStatus.index !== null) {
     selectedIndex.value = nextStatus.index;
   }
-  if (
-    nextStatus.opened &&
-    (nextStatus.state === "available" || nextStatus.state === "mock")
-  ) {
-    streamFailed.value = false;
-    streamSession.value += 1;
-  }
   emit("statusChange", nextStatus);
 }
 
 function handleCameraError(error: unknown): void {
-  const details = getApiErrorDetails(error);
-  const stateByCode: Partial<Record<string, CameraState>> = {
-    CAMERA_NOT_FOUND: "not_found",
-    CAMERA_OPEN_FAILED: "open_failed",
-    CAMERA_DEVICE_BUSY: "busy",
-    CAMERA_DISCONNECTED: "disconnected",
-    CAMERA_READ_FAILED: "read_failed",
-  };
-  const state = (details.code && stateByCode[details.code]) || "open_failed";
-  updateStatus(createStatus(state, details.message, details.code));
+  let state: CameraState = "open_failed";
+  let message = "摄像头打开失败";
+  let code = "CAMERA_OPEN_FAILED";
+
+  if (error instanceof DOMException) {
+    if (error.name === "NotAllowedError" || error.name === "SecurityError") {
+      state = "open_failed";
+      message = "摄像头权限被拒绝，请在浏览器设置中允许访问摄像头";
+      code = "CAMERA_OPEN_FAILED";
+    } else if (
+      error.name === "NotFoundError" ||
+      error.name === "OverconstrainedError" ||
+      error.name === "DevicesNotFoundError"
+    ) {
+      state = "not_found";
+      message = "未检测到可用摄像头";
+      code = "CAMERA_NOT_FOUND";
+    } else if (error.name === "NotReadableError") {
+      state = "busy";
+      message = "摄像头可能正在被其他程序使用";
+      code = "CAMERA_DEVICE_BUSY";
+    } else if (error.name === "AbortError") {
+      state = "open_failed";
+      message = "摄像头启动被中断";
+      code = "CAMERA_OPEN_FAILED";
+    } else {
+      message = error.message || message;
+    }
+  } else if (error instanceof Error) {
+    message = error.message;
+  }
+
+  updateStatus(createStatus(state, message, code));
 }
 
-async function runCameraOperation(
-  operation: () => Promise<CameraStatus>,
-  refreshDeviceList = true,
-): Promise<void> {
+function stopStream(): void {
+  if (mediaStream) {
+    mediaStream.getTracks().forEach((track) => {
+      track.onended = null;
+      track.stop();
+    });
+    mediaStream = null;
+  }
+  const video = videoRef.value;
+  if (video) {
+    video.srcObject = null;
+  }
+}
+
+async function listBrowserCameras(): Promise<void> {
+  try {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      cameras.value = [];
+      return;
+    }
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoDevices = devices.filter((d) => d.kind === "videoinput");
+    cameras.value = videoDevices.map((device, index) => ({
+      index,
+      name: device.label || `Camera ${index + 1}`,
+      available: true,
+    }));
+  } catch {
+    cameras.value = [];
+  }
+}
+
+async function openBrowserCamera(deviceIndex: number | null): Promise<void> {
   if (busy.value) {
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    updateStatus(
+      createStatus(
+        "not_found",
+        "当前浏览器不支持摄像头访问，请使用 HTTPS 或 localhost 访问",
+        "CAMERA_NOT_FOUND",
+      ),
+    );
     return;
   }
 
   busy.value = true;
+  stopStream();
+
   try {
-    const nextStatus = await operation();
-    updateStatus(nextStatus);
-    if (refreshDeviceList) {
-      await loadCameraList();
+    const constraints: MediaStreamConstraints = { video: true };
+    if (deviceIndex !== null) {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter((d) => d.kind === "videoinput");
+      const target = videoDevices[deviceIndex];
+      if (target?.deviceId) {
+        constraints.video = { deviceId: { exact: target.deviceId } };
+      }
     }
+
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    mediaStream = stream;
+
+    const videoTrack = stream.getVideoTracks()[0];
+    const settings = videoTrack ? videoTrack.getSettings() : {};
+    videoTrack.onended = () => {
+      if (!mediaStream) {
+        return;
+      }
+      updateStatus({
+        ...status.value,
+        state: "disconnected",
+        opened: false,
+        available: false,
+        message: "摄像头已断开",
+        code: "CAMERA_DISCONNECTED",
+      });
+    };
+
+    updateStatus({
+      state: "available",
+      source: "real",
+      camera_id: "CAM-001",
+      opened: true,
+      index: deviceIndex ?? 0,
+      name: videoTrack?.label || "Browser Camera",
+      available: true,
+      width: settings.width ?? null,
+      height: settings.height ?? null,
+      fps: settings.frameRate ?? null,
+      message: null,
+      code: null,
+    });
+
+    await nextTick();
+    const video = videoRef.value;
+    if (video) {
+      video.srcObject = stream;
+      try {
+        await video.play();
+      } catch {
+        // Autoplay may be rejected by the browser; the video element still renders frames.
+      }
+    }
+
+    await listBrowserCameras();
   } catch (error) {
     handleCameraError(error);
   } finally {
@@ -195,21 +291,12 @@ async function runCameraOperation(
   }
 }
 
-async function loadCameraList(): Promise<void> {
-  try {
-    const listed = await listCameras();
-    cameras.value = listed.cameras;
-  } catch {
-    cameras.value = [];
-  }
-}
-
 async function detectSelected(): Promise<void> {
-  await runCameraOperation(detectCamera);
+  await openBrowserCamera(null);
 }
 
 async function reconnectSelected(): Promise<void> {
-  await runCameraOperation(() => reconnectCamera(selectedIndex.value));
+  await openBrowserCamera(selectedIndex.value);
 }
 
 async function openSelected(): Promise<void> {
@@ -217,76 +304,82 @@ async function openSelected(): Promise<void> {
 }
 
 async function switchToMock(): Promise<void> {
-  await runCameraOperation(useMockCamera, false);
+  if (busy.value) {
+    return;
+  }
+  stopStream();
+  updateStatus({
+    state: "mock",
+    source: "mock",
+    camera_id: "MOCK-CAMERA",
+    opened: true,
+    index: null,
+    name: "Mock Camera",
+    available: true,
+    width: null,
+    height: null,
+    fps: null,
+    message: "Mock 模式在浏览器部署下不提供实时画面",
+    code: null,
+  });
+  await listBrowserCameras();
 }
 
 async function switchToReal(): Promise<void> {
-  await runCameraOperation(() => reconnectCamera(selectedIndex.value));
+  await reconnectSelected();
 }
 
 async function closeSelected(): Promise<void> {
-  await runCameraOperation(closeCamera, false);
-}
-
-async function syncStatus(): Promise<void> {
-  try {
-    const nextStatus = await getCameraStatus();
-    if (
-      nextStatus.opened &&
-      (nextStatus.state === "available" || nextStatus.state === "mock")
-    ) {
-      status.value = nextStatus;
-      emit("statusChange", nextStatus);
-      return;
-    }
-    updateStatus(nextStatus);
-  } catch {
-    // The health indicator reports local service failures.
-  }
-}
-
-function restartPreview(): void {
-  streamFailed.value = false;
-  streamSession.value += 1;
-}
-
-function handleStreamError(): void {
-  if (!cameraFeedActive.value || props.frozen) {
+  if (busy.value) {
     return;
   }
-  streamFailed.value = true;
-  updateStatus({
-    ...status.value,
-    state: "disconnected",
-    opened: false,
-    available: false,
-    message: "实时画面连接中断",
-    code: "CAMERA_DISCONNECTED",
+  busy.value = true;
+  try {
+    stopStream();
+    updateStatus(createStatus("closed", "摄像头已关闭"));
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function restartPreview(): Promise<void> {
+  await detectSelected();
+}
+
+async function captureFrame(): Promise<Blob> {
+  const video = videoRef.value;
+  if (!video || !video.videoWidth || !video.videoHeight) {
+    throw new Error("摄像头画面尚未就绪");
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("浏览器无法创建画面快照");
+  }
+  context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, "image/jpeg", 0.92);
   });
-  void syncStatus();
+  if (!blob) {
+    throw new Error("画面编码失败");
+  }
+  return blob;
 }
 
 onMounted(async () => {
   await detectSelected();
-  statusPollTimer = window.setInterval(() => {
-    if (cameraFeedActive.value) {
-      void syncStatus();
-    }
-  }, 2_000);
 });
 
 onBeforeUnmount(() => {
-  if (statusPollTimer !== null) {
-    window.clearInterval(statusPollTimer);
-  }
-  if (cameraFeedActive.value) {
-    void closeCamera();
-  }
+  stopStream();
 });
 
 defineExpose({
   restartPreview,
   closeSelected,
+  captureFrame,
 });
 </script>
 
@@ -354,14 +447,22 @@ defineExpose({
     </div>
 
     <div class="camera-stage" aria-label="摄像头预览区域">
-      <img
-        v-if="displayImageUrl"
-        :src="displayImageUrl"
+      <video
+        v-show="showLiveVideo"
+        ref="videoRef"
         class="camera-image"
-        alt="摄像头实时画面"
-        @error="handleStreamError"
+        autoplay
+        playsinline
+        muted
+        aria-label="摄像头实时画面"
+      ></video>
+      <img
+        v-if="showFrozenImage"
+        :src="props.capturedImageUrl ?? ''"
+        class="camera-image"
+        alt="拍摄图片"
       />
-      <div v-else class="camera-empty">
+      <div v-if="showEmptyState" class="camera-empty">
         <span>{{ status.state === "mock" ? "MOCK" : "LIVE" }}</span>
         <strong>{{ props.frozen ? "已冻结拍摄画面" : statusTitle }}</strong>
         <p>{{ statusDetail }}</p>
@@ -385,9 +486,10 @@ defineExpose({
             使用 Mock 模式
           </button>
           <button
-            v-if="streamFailed && cameraFeedActive"
+            v-if="status.state === 'disconnected'"
             class="button compact"
             type="button"
+            :disabled="busy"
             @click="restartPreview"
           >
             重连画面

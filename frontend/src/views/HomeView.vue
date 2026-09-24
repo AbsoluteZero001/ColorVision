@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import CameraView from "@/components/CameraView.vue";
 import CapturePanel from "@/components/CapturePanel.vue";
 import ColorResult from "@/components/ColorResult.vue";
 import RoiSelector from "@/components/RoiSelector.vue";
-import { captureFrame } from "@/services/camera";
 import { analyzeRoi } from "@/services/color";
 import { apiClient, getApiErrorMessage } from "@/services/api";
 import { uploadResult as sendUpload } from "@/services/upload";
@@ -24,6 +23,7 @@ import type { UploadResult } from "@/types/upload";
 
 interface CameraViewHandle {
   restartPreview: () => void;
+  captureFrame: () => Promise<Blob>;
 }
 
 const camera = ref<CameraViewHandle | null>(null);
@@ -67,16 +67,24 @@ async function handleCapture(): Promise<void> {
   if (capturing.value || analyzing.value || uploading.value) {
     return;
   }
+  if (!camera.value) {
+    errorMessage.value = "摄像头组件尚未就绪";
+    return;
+  }
   capturing.value = true;
   errorMessage.value = "";
   try {
-    const result = await captureFrame();
-    const response = await fetch(result.image_url);
-    if (!response.ok) {
-      throw new Error("拍摄图片无法加载");
+    const blob = await camera.value.captureFrame();
+    if (capture.value?.image_url) {
+      URL.revokeObjectURL(capture.value.image_url);
     }
-    capturedImageBlob.value = await response.blob();
-    capture.value = result;
+    const url = URL.createObjectURL(blob);
+    capturedImageBlob.value = blob;
+    capture.value = {
+      image_path: "",
+      image_url: url,
+      captured_at: new Date().toISOString(),
+    };
     colorResult.value = null;
     uploadState.value = null;
     frozen.value = true;
@@ -91,6 +99,9 @@ async function handleCapture(): Promise<void> {
 function resetCapture(): void {
   if (analyzing.value || uploading.value) {
     return;
+  }
+  if (capture.value?.image_url) {
+    URL.revokeObjectURL(capture.value.image_url);
   }
   capture.value = null;
   capturedImageBlob.value = null;
@@ -234,6 +245,12 @@ async function loadConfig(): Promise<void> {
     errorMessage.value = getApiErrorMessage(error);
   }
 }
+
+onBeforeUnmount(() => {
+  if (capture.value?.image_url) {
+    URL.revokeObjectURL(capture.value.image_url);
+  }
+});
 
 onMounted(loadConfig);
 </script>
