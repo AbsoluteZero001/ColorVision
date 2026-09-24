@@ -1,0 +1,215 @@
+﻿name: Deploy ColorVision
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: colorvision-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Test frontend
+        working-directory: frontend
+        run: npm test
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Verify frontend build
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f frontend/dist/index.html
+          echo "Frontend build: PASS"
+
+      - name: Prepare release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p deploy-out
+
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='.idea/' \
+            --exclude='.vscode/' \
+            --exclude='.venv/' \
+            --exclude='venv/' \
+            --exclude='.pytest_cache/' \
+            --exclude='frontend/node_modules/' \
+            --exclude='frontend/.vite/' \
+            --exclude='build/' \
+            --exclude='/dist/' \
+            --exclude='data/captures/*' \
+            --exclude='data/results/*' \
+            --exclude='data/logs/*' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            ./ deploy-out/
+
+          test -f deploy-out/backend/main.py
+          test -f deploy-out/backend/requirements.txt
+          test -f deploy-out/frontend/dist/index.html
+
+          echo "Release preparation: PASS"
+
+      - name: Validate deployment secrets
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+
+          : "${SSH_PRIVATE_KEY:?DEPLOY_SSH_KEY is not configured}"
+          : "${DEPLOY_HOST:?DEPLOY_HOST is not configured}"
+          : "${DEPLOY_PORT:?DEPLOY_PORT is not configured}"
+          : "${DEPLOY_USER:?DEPLOY_USER is not configured}"
+
+          echo "Deployment secrets: PASS"
+
+      - name: Configure SSH
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          set -euo pipefail
+
+          install -m 700 -d ~/.ssh
+
+          printf '%s\n' "$SSH_PRIVATE_KEY" \
+            | tr -d '\r' \
+            > ~/.ssh/id_ed25519
+
+          chmod 600 ~/.ssh/id_ed25519
+
+          ssh-keyscan \
+            -p "$DEPLOY_PORT" \
+            -H "$DEPLOY_HOST" \
+            >> ~/.ssh/known_hosts
+
+          chmod 600 ~/.ssh/known_hosts
+
+          echo "SSH configuration: PASS"
+
+      - name: Test SSH connection
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i ~/.ssh/id_ed25519 \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "echo 'SSH connection: PASS'; whoami; hostname"
+
+      - name: Create release directory
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i ~/.ssh/id_ed25519 \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "rm -rf '/opt/evezero/projects/colorvision/releases/${GITHUB_SHA}' && mkdir -p '/opt/evezero/projects/colorvision/releases/${GITHUB_SHA}'"
+
+      - name: Upload release
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+
+          rsync \
+            -az \
+            --delete \
+            -e "ssh -i ~/.ssh/id_ed25519 -p $DEPLOY_PORT -o BatchMode=yes" \
+            deploy-out/ \
+            "$DEPLOY_USER@$DEPLOY_HOST:/opt/evezero/projects/colorvision/releases/${GITHUB_SHA}/"
+
+          echo "Release upload: PASS"
+
+      - name: Activate release
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i ~/.ssh/id_ed25519 \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "sudo -n /opt/evezero/projects/colorvision/deploy.sh '${GITHUB_SHA}'"
+
+      - name: Verify deployment
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i ~/.ssh/id_ed25519 \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "set -e
+             test \"\$(readlink -f /opt/evezero/projects/colorvision/current)\" = \"/opt/evezero/projects/colorvision/releases/${GITHUB_SHA}\"
+             systemctl is-active --quiet colorvision.service
+             curl --fail --silent --show-error http://127.0.0.1:8090/ >/dev/null
+             echo 'ColorVision deployment verification: PASS'
+             echo 'Release: ${GITHUB_SHA}'"
+
+
