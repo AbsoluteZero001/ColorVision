@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [switch]$FrontendOnly
+    [switch]$FrontendOnly,
+    [switch]$SkipInstaller
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,6 +11,7 @@ $FrontendDist = Join-Path $FrontendRoot "dist"
 $FrontendIndex = Join-Path $FrontendDist "index.html"
 $FrontendAssets = Join-Path $FrontendDist "assets"
 $SpecPath = Join-Path $ProjectRoot "colorvision.spec"
+$InstallerScriptPath = Join-Path $ProjectRoot "installer\ColorVision.iss"
 
 if (-not (Test-Path -LiteralPath (Join-Path $FrontendRoot "node_modules"))) {
     throw "Frontend dependencies not found. Run npm install in the frontend directory first."
@@ -41,7 +43,7 @@ if ($FrontendOnly) {
 }
 
 if (-not (Test-Path -LiteralPath $SpecPath)) {
-    throw "colorvision.spec is not available yet. PyInstaller packaging has not been implemented."
+    throw "colorvision.spec is missing."
 }
 
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
@@ -57,12 +59,14 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($Version)) {
 $BuildRoot = Join-Path $ProjectRoot "build"
 $DistRoot = Join-Path $ProjectRoot "dist"
 $StagingRoot = Join-Path $BuildRoot "release-staging"
+$InstallerStagingRoot = Join-Path $BuildRoot "installer-staging"
 $WorkRoot = Join-Path $BuildRoot "pyinstaller-v$Version"
-$ExeFileName = "ColorVision-v$Version-win-x64.exe"
-$StagedExecutablePath = Join-Path $StagingRoot $ExeFileName
-$FinalExecutablePath = Join-Path $DistRoot $ExeFileName
-$LegacyDirPath = Join-Path $DistRoot "ColorVision"
-$LegacyZipPath = Join-Path $DistRoot "ColorVision-v$Version-win-x64.zip"
+$StagedAppRoot = Join-Path $StagingRoot "ColorVision"
+$StagedExePath = Join-Path $StagedAppRoot "ColorVision.exe"
+$StagedInternalDir = Join-Path $StagedAppRoot "_internal"
+$FinalBundleRoot = Join-Path $DistRoot "ColorVision"
+$FinalExecutablePath = Join-Path $FinalBundleRoot "ColorVision.exe"
+$InstallerOutputPath = Join-Path $DistRoot "ColorVision_Setup.exe"
 
 function Remove-SafeTree {
     param(
@@ -88,8 +92,90 @@ function Remove-SafeTree {
     }
 }
 
+function Write-DefaultConfigFiles {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ConfigDir,
+        [Parameter(Mandatory = $true)]
+        [string]$InstallDirValue,
+        [Parameter(Mandatory = $true)]
+        [string]$AppVersion
+    )
+
+    New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
+    $SeedScript = @'
+import json
+import sys
+from pathlib import Path
+
+config_dir = Path(sys.argv[1])
+install_dir_value = sys.argv[2]
+app_version = sys.argv[3]
+bundled_path = Path(sys.argv[4])
+
+raw = json.loads(bundled_path.read_text(encoding="utf-8"))
+
+app_payload = {
+    "app_name": "ColorVision",
+    "version": app_version,
+    "install_dir": install_dir_value,
+    "port": int(raw.get("port", 8000)),
+    "image_retention_days": int(raw.get("image_retention_days", 0)),
+    "max_image_count": int(raw.get("max_image_count", 0)),
+    "log_enabled": bool(raw.get("log_enabled", True)),
+    "log_image_storage_enabled": bool(raw.get("log_image_storage_enabled", True)),
+    "log_retention_days": int(raw.get("log_retention_days", 0)),
+    "max_log_count": int(raw.get("max_log_count", 0)),
+}
+api_payload = {
+    "api_url": str(raw.get("api_url", "http://127.0.0.1:9000/api/color")),
+    "token": str(raw.get("token", "")),
+    "auto_upload": bool(raw.get("auto_upload", False)),
+    "mock_mode": bool(raw.get("mock_mode", True)),
+    "timeout": float(raw.get("timeout", 10.0)),
+}
+camera_payload = {
+    "camera_id": str(raw.get("camera_id", "CAM-001")),
+}
+
+for name, payload in (
+    ("app.json", app_payload),
+    ("api-config.json", api_payload),
+    ("camera.json", camera_payload),
+):
+    (config_dir / name).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+'@
+    $BundledConfig = Join-Path $ProjectRoot "backend\config\config.json"
+    $SeedScript | & $Python - $ConfigDir $InstallDirValue $AppVersion $BundledConfig
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to generate default configuration files in $ConfigDir"
+    }
+}
+
+function Find-InnoSetupCompiler {
+    $cmd = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
+    if ($cmd) {
+        return $cmd.Source
+    }
+    $candidates = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"),
+        "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+        "C:\Program Files\Inno Setup 6\ISCC.exe"
+    )
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            return $candidate
+        }
+    }
+    return $null
+}
+
 New-Item -ItemType Directory -Force -Path $BuildRoot, $DistRoot | Out-Null
 Remove-SafeTree -Path $StagingRoot -AllowedRoot $BuildRoot
+Remove-SafeTree -Path $InstallerStagingRoot -AllowedRoot $BuildRoot
 Remove-SafeTree -Path $WorkRoot -AllowedRoot $BuildRoot
 
 & $Python -m PyInstaller `
@@ -102,56 +188,108 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller build failed."
 }
 
-if (-not (Test-Path -LiteralPath $StagedExecutablePath -PathType Leaf)) {
-    throw "PyInstaller completed without producing the staged single-file EXE: $StagedExecutablePath"
+if (-not (Test-Path -LiteralPath $StagedExePath -PathType Leaf)) {
+    throw "PyInstaller completed without producing ColorVision.exe: $StagedExePath"
+}
+if (-not (Test-Path -LiteralPath $StagedInternalDir -PathType Container)) {
+    throw "PyInstaller completed without producing _internal directory: $StagedInternalDir"
 }
 
-$VerifyArchiveScript = @'
-import sys
-from PyInstaller.archive.readers import CArchiveReader
-
-exe_path = sys.argv[1]
-reader = CArchiveReader(exe_path)
-entries = {name.replace("\\", "/") for name in reader.toc}
-
-required = ("backend/config/config.json", "frontend/dist/index.html")
-for item in required:
-    if item not in entries:
-        raise SystemExit(f"Missing embedded resource in EXE: {item}")
-
-assets = [name for name in entries if name.startswith("frontend/dist/assets/")]
-if not assets:
-    raise SystemExit("Missing embedded Vue assets under frontend/dist/assets/")
-
-print(f"Verified {len(entries)} embedded archive entries ({len(assets)} frontend asset(s)).")
-'@
-
-$VerifyArchiveScript | & $Python - $StagedExecutablePath
-if ($LASTEXITCODE -ne 0) {
-    throw "Embedded resource verification failed for $StagedExecutablePath"
+$RequiredBundled = @(
+    (Join-Path $StagedInternalDir "backend\config\config.json"),
+    (Join-Path $StagedInternalDir "frontend\dist\index.html")
+)
+foreach ($Item in $RequiredBundled) {
+    if (-not (Test-Path -LiteralPath $Item -PathType Leaf)) {
+        throw "Missing bundled resource under _internal: $Item"
+    }
+}
+$BundledAssets = @(Get-ChildItem -LiteralPath (Join-Path $StagedInternalDir "frontend\dist\assets") -File -Recurse -ErrorAction SilentlyContinue)
+if ($BundledAssets.Count -eq 0) {
+    throw "Missing bundled Vue assets under _internal\frontend\dist\assets"
 }
 
-if (Test-Path -LiteralPath $LegacyDirPath) {
-    Remove-SafeTree -Path $LegacyDirPath -AllowedRoot $DistRoot
+# Prepare clean installer staging layout (no developer test data/logs)
+New-Item -ItemType Directory -Force -Path $InstallerStagingRoot | Out-Null
+Copy-Item -LiteralPath $StagedExePath -Destination (Join-Path $InstallerStagingRoot "ColorVision.exe") -Force
+Copy-Item -LiteralPath $StagedInternalDir -Destination (Join-Path $InstallerStagingRoot "_internal") -Recurse -Force
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "README.md") -Destination (Join-Path $InstallerStagingRoot "README.md") -Force
+Write-DefaultConfigFiles `
+    -ConfigDir (Join-Path $InstallerStagingRoot "config") `
+    -InstallDirValue "__COLORVISION_INSTALL_DIR__" `
+    -AppVersion $Version
+
+# Refresh clean portable bundle in dist/ColorVision (preserving existing user config/data/cache/logs if present)
+New-Item -ItemType Directory -Force -Path $FinalBundleRoot | Out-Null
+Copy-Item -LiteralPath $StagedExePath -Destination $FinalExecutablePath -Force
+$TargetInternal = Join-Path $FinalBundleRoot "_internal"
+if (Test-Path -LiteralPath $TargetInternal) {
+    Remove-SafeTree -Path $TargetInternal -AllowedRoot $FinalBundleRoot
 }
-if (Test-Path -LiteralPath $LegacyZipPath -PathType Leaf) {
-    Remove-Item -LiteralPath $LegacyZipPath -Force
+Copy-Item -LiteralPath $StagedInternalDir -Destination $TargetInternal -Recurse -Force
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "README.md") -Destination (Join-Path $FinalBundleRoot "README.md") -Force
+
+foreach ($SubDir in @(
+    "config",
+    "data",
+    "data\photos",
+    "data\photos\captures",
+    "data\photos\uploads",
+    "data\history",
+    "data\database",
+    "cache",
+    "logs"
+)) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $FinalBundleRoot $SubDir) | Out-Null
+}
+if (-not (Test-Path -LiteralPath (Join-Path $FinalBundleRoot "config\app.json"))) {
+    Write-DefaultConfigFiles `
+        -ConfigDir (Join-Path $FinalBundleRoot "config") `
+        -InstallDirValue $FinalBundleRoot `
+        -AppVersion $Version
 }
 
-Copy-Item -LiteralPath $StagedExecutablePath -Destination $FinalExecutablePath -Force
+if (-not $SkipInstaller) {
+    if (-not (Test-Path -LiteralPath $InstallerScriptPath -PathType Leaf)) {
+        throw "Inno Setup script not found: $InstallerScriptPath"
+    }
+    $IsccPath = Find-InnoSetupCompiler
+    if (-not $IsccPath) {
+        throw "Inno Setup 6 compiler (ISCC.exe) was not found."
+    }
 
-if (-not (Test-Path -LiteralPath $FinalExecutablePath -PathType Leaf)) {
-    throw "Final single-file EXE is missing: $FinalExecutablePath"
+    if (Test-Path -LiteralPath $InstallerOutputPath -PathType Leaf) {
+        Remove-Item -LiteralPath $InstallerOutputPath -Force
+    }
+
+    & $IsccPath `
+        "/DMyAppVersion=$Version" `
+        "/DSourceDir=$InstallerStagingRoot" `
+        $InstallerScriptPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Inno Setup compilation failed."
+    }
+
+    if (-not (Test-Path -LiteralPath $InstallerOutputPath -PathType Leaf)) {
+        throw "Installer output is missing: $InstallerOutputPath"
+    }
 }
 
 Remove-SafeTree -Path $StagingRoot -AllowedRoot $BuildRoot
+Remove-SafeTree -Path $InstallerStagingRoot -AllowedRoot $BuildRoot
 Remove-SafeTree -Path $WorkRoot -AllowedRoot $BuildRoot
 
 $Executable = Get-Item -LiteralPath $FinalExecutablePath
-$SizeMb = [Math]::Round($Executable.Length / 1MB, 2)
-$Hash = (Get-FileHash -LiteralPath $FinalExecutablePath -Algorithm SHA256).Hash
+$ExeSizeMb = [Math]::Round($Executable.Length / 1MB, 2)
+$ExeHash = (Get-FileHash -LiteralPath $FinalExecutablePath -Algorithm SHA256).Hash
 
 Write-Host "ColorVision version: $Version"
-Write-Host "ColorVision EXE: $FinalExecutablePath"
-Write-Host "ColorVision EXE size: $SizeMb MB ($($Executable.Length) bytes)"
-Write-Host "ColorVision EXE SHA-256: $Hash"
+Write-Host "ColorVision bundle: $FinalBundleRoot"
+Write-Host "ColorVision EXE: $FinalExecutablePath ($ExeSizeMb MB, SHA-256: $ExeHash)"
+
+if (-not $SkipInstaller) {
+    $SetupFile = Get-Item -LiteralPath $InstallerOutputPath
+    $SetupSizeMb = [Math]::Round($SetupFile.Length / 1MB, 2)
+    $SetupHash = (Get-FileHash -LiteralPath $InstallerOutputPath -Algorithm SHA256).Hash
+    Write-Host "ColorVision Setup: $InstallerOutputPath ($SetupSizeMb MB, SHA-256: $SetupHash)"
+}

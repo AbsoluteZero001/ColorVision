@@ -1,8 +1,11 @@
-"""SQLite-backed upload logs with local image retention."""
+"""SQLite-backed upload logs with unified photo, history, and database storage."""
 
 from __future__ import annotations
 
+import json
 import logging
+import re
+import shutil
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -19,7 +22,12 @@ from backend.models.upload import UploadResultData
 from backend.services.config_service import get_config_service
 from backend.services.upload_service import UploadPayload
 from backend.utils.errors import AppException
-from backend.utils.paths import get_logs_directory
+from backend.utils.paths import (
+    get_data_directory,
+    get_database_path,
+    get_history_directory,
+    get_uploaded_photos_directory,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,21 +40,46 @@ IMAGE_EXTENSIONS = {
     "image/webp": ".webp",
 }
 SAFE_IMAGE_SUFFIXES = {".bmp", ".jpg", ".jpeg", ".png", ".webp"}
+SAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 class LogService:
-    """Persist upload metadata in SQLite and associated images on local disk."""
+    """Persist upload metadata in data/database, history JSONs in data/history, and photos in data/photos."""
 
     def __init__(
         self,
         logs_directory: Path | None = None,
+        *,
+        database_path: Path | None = None,
+        images_directory: Path | None = None,
+        history_directory: Path | None = None,
+        data_directory: Path | None = None,
         config_provider: Callable[[], AppConfig] | None = None,
         now_provider: Callable[[], datetime] | None = None,
     ) -> None:
-        self._logs_directory = logs_directory or get_logs_directory()
-        self._data_directory = self._logs_directory.parent
-        self._images_directory = self._logs_directory / "images"
-        self._database_path = self._logs_directory / "colorvision.db"
+        if logs_directory is not None:
+            self._custom_paths = True
+            self._data_directory = data_directory or logs_directory.parent
+            self._images_directory = images_directory or (logs_directory / "images")
+            self._history_directory = history_directory or (logs_directory / "history")
+            self._database_path = database_path or (logs_directory / "colorvision.db")
+        elif any(
+            arg is not None
+            for arg in (database_path, images_directory, history_directory, data_directory)
+        ):
+            self._custom_paths = True
+            base_data = data_directory or get_data_directory()
+            self._data_directory = base_data
+            self._images_directory = images_directory or (base_data / "photos" / "uploads")
+            self._history_directory = history_directory or (base_data / "history")
+            self._database_path = database_path or (base_data / "database" / "colorvision.db")
+        else:
+            self._custom_paths = False
+            self._data_directory = get_data_directory()
+            self._images_directory = get_uploaded_photos_directory()
+            self._history_directory = get_history_directory()
+            self._database_path = get_database_path()
+
         self._config_provider = config_provider or get_config_service().get_config
         self._now_provider = now_provider or (
             lambda: datetime.now(BEIJING_TIMEZONE)
@@ -61,16 +94,27 @@ class LogService:
 
     @property
     def images_directory(self) -> Path:
-        """Return the directory used for upload-log images."""
+        """Return the directory used for uploaded log images."""
         return self._images_directory
 
+    @property
+    def history_directory(self) -> Path:
+        """Return the directory used for structured upload history records."""
+        return self._history_directory
+
     def initialize(self) -> None:
-        """Create the database and empty schema without inserting seed data."""
+        """Create storage directories, migrate legacy data if present, and ensure schema."""
         with self._lock:
             if self._initialized:
                 return
             try:
+                self._database_path.parent.mkdir(parents=True, exist_ok=True)
                 self._images_directory.mkdir(parents=True, exist_ok=True)
+                self._history_directory.mkdir(parents=True, exist_ok=True)
+
+                if not self._custom_paths:
+                    self._migrate_legacy_storage_unlocked()
+
                 with self._connect() as connection:
                     connection.execute("PRAGMA journal_mode=WAL")
                     connection.execute(
@@ -116,6 +160,70 @@ class LogService:
                     code=ErrorCode.LOG_WRITE_FAILED,
                     status_code=500,
                 ) from exc
+
+    def _migrate_legacy_storage_unlocked(self) -> None:
+        """Migrate legacy data/logs/{colorvision.db,images} to unified data/ layout."""
+        legacy_logs_dir = self._data_directory / "logs"
+        legacy_db = legacy_logs_dir / "colorvision.db"
+        legacy_images_dir = legacy_logs_dir / "images"
+
+        if legacy_db.is_file() and not self._database_path.exists():
+            logger.info(
+                "Migrating legacy SQLite database from %s to %s",
+                legacy_db,
+                self._database_path,
+            )
+            src_conn = sqlite3.connect(legacy_db, timeout=5)
+            try:
+                dst_conn = sqlite3.connect(self._database_path, timeout=5)
+                try:
+                    src_conn.backup(dst_conn)
+                    dst_conn.commit()
+                finally:
+                    dst_conn.close()
+            finally:
+                src_conn.close()
+
+        if legacy_images_dir.is_dir():
+            for item in legacy_images_dir.iterdir():
+                if item.is_file():
+                    target = self._images_directory / item.name
+                    if not target.exists():
+                        shutil.copy2(item, target)
+
+        if self._database_path.is_file():
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT id, original_image_path, roi_image_path
+                    FROM upload_logs
+                    WHERE original_image_path LIKE 'logs/images/%'
+                       OR roi_image_path LIKE 'logs/images/%'
+                    """
+                ).fetchall()
+                for row in rows:
+                    orig = row["original_image_path"]
+                    roi = row["roi_image_path"]
+                    new_orig = (
+                        f"photos/uploads/{Path(orig).name}"
+                        if orig and orig.startswith("logs/images/")
+                        else orig
+                    )
+                    new_roi = (
+                        f"photos/uploads/{Path(roi).name}"
+                        if roi and roi.startswith("logs/images/")
+                        else roi
+                    )
+                    connection.execute(
+                        """
+                        UPDATE upload_logs
+                        SET original_image_path = ?, roi_image_path = ?
+                        WHERE id = ?
+                        """,
+                        (new_orig, new_roi, int(row["id"])),
+                    )
+                if rows:
+                    connection.commit()
 
     def record_upload(
         self,
@@ -201,6 +309,17 @@ class LogService:
                     )
                     log_id = int(cursor.lastrowid)
                     connection.commit()
+
+                history_path = self._write_history_entry(
+                    log_id=log_id,
+                    uploaded_at=now.isoformat(timespec="seconds"),
+                    uploaded_at_beijing=now.strftime("%Y-%m-%d %H:%M:%S"),
+                    payload=payload,
+                    result=result,
+                    original_relative=original_relative,
+                    roi_relative=roi_relative,
+                )
+                written_paths.append(history_path)
         except (
             KeyError,
             OSError,
@@ -275,7 +394,7 @@ class LogService:
         return self._enforce_retention(config_data, self._beijing_now())
 
     def delete_entry(self, log_id: int) -> int:
-        """Delete one upload log and its local image files."""
+        """Delete one upload log, its history snapshot, and its local image files."""
         self._initialize_if_needed()
         with self._lock:
             try:
@@ -311,10 +430,11 @@ class LogService:
                 row["original_image_path"],
                 row["roi_image_path"],
             )
+            self._delete_history_entries([log_id])
             return int(cursor.rowcount)
 
     def clear_entries(self) -> int:
-        """Delete every upload log and all managed log images."""
+        """Delete every upload log, history snapshot, and managed log image."""
         self._initialize_if_needed()
         with self._lock:
             try:
@@ -335,6 +455,7 @@ class LogService:
                 ) from exc
 
             self._clear_image_directory()
+            self._clear_history_directory()
             return deleted
 
     def _initialize_if_needed(self) -> None:
@@ -409,6 +530,7 @@ class LogService:
 
         for image_path in image_paths:
             self._delete_relative_image(image_path)
+        self._delete_history_entries(ids)
         if ids:
             logger.info("Upload log retention removed %d entries", len(ids))
         return len(ids)
@@ -444,6 +566,60 @@ class LogService:
             original_image_url=self._image_url(row["original_image_path"]),
             roi_image_url=self._image_url(row["roi_image_path"]),
         )
+
+    def _write_history_entry(
+        self,
+        *,
+        log_id: int,
+        uploaded_at: str,
+        uploaded_at_beijing: str,
+        payload: UploadPayload,
+        result: UploadResultData,
+        original_relative: str | None,
+        roi_relative: str | None,
+    ) -> Path:
+        self._history_directory.mkdir(parents=True, exist_ok=True)
+        safe_req = SAFE_FILENAME_CHARS.sub("_", result.request_id).strip("_") or "upload"
+        history_path = self._history_directory / f"upload_{log_id:06d}_{safe_req}.json"
+        record = {
+            "id": log_id,
+            "uploaded_at": uploaded_at,
+            "uploaded_at_beijing": uploaded_at_beijing,
+            "captured_at": payload.timestamp,
+            "camera_id": payload.camera_id,
+            "rgb": payload.rgb,
+            "lab": payload.lab,
+            "hex": payload.hex,
+            "roi": payload.roi,
+            "upload_mode": result.mode,
+            "request_id": result.request_id,
+            "message": result.message,
+            "original_image_path": original_relative,
+            "roi_image_path": roi_relative,
+        }
+        history_path.write_text(
+            json.dumps(record, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return history_path
+
+    def _delete_history_entries(self, log_ids: set[int] | list[int]) -> None:
+        if not self._history_directory.is_dir():
+            return
+        targets: list[Path] = []
+        for log_id in log_ids:
+            targets.extend(self._history_directory.glob(f"upload_{log_id:06d}_*.json"))
+        self._delete_paths(targets)
+
+    def _clear_history_directory(self) -> None:
+        if not self._history_directory.is_dir():
+            return
+        targets = [
+            path
+            for path in self._history_directory.glob("upload_*.json")
+            if path.is_file() or path.is_symlink()
+        ]
+        self._delete_paths(targets)
 
     def _new_image_path(
         self,
@@ -513,7 +689,7 @@ class LogService:
             try:
                 path.unlink(missing_ok=True)
             except OSError:
-                logger.warning("Upload log image could not be deleted: %s", path)
+                logger.warning("Upload log file could not be deleted: %s", path)
 
     def _beijing_now(self) -> datetime:
         value = self._now_provider()

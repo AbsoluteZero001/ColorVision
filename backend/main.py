@@ -91,20 +91,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-captures_directory, results_directory, logs_directory = ensure_runtime_directories()
+runtime_dirs = ensure_runtime_directories()
+app.mount(
+    "/media/photos",
+    StaticFiles(directory=runtime_dirs.photos),
+    name="photo-media",
+)
 app.mount(
     "/media/captures",
-    StaticFiles(directory=captures_directory),
+    StaticFiles(directory=runtime_dirs.captures),
     name="capture-media",
 )
 app.mount(
-    "/media/results",
-    StaticFiles(directory=results_directory),
-    name="result-media",
-)
-app.mount(
     "/media/logs/images",
-    StaticFiles(directory=logs_directory / "images"),
+    StaticFiles(directory=runtime_dirs.uploads),
     name="log-media",
 )
 

@@ -19,13 +19,15 @@ from backend.models.common import ErrorCode
 from backend.models.config import AppConfig
 from backend.services.config_service import get_config_service
 from backend.utils.errors import AppException
-from backend.utils.paths import get_data_directory, get_project_root
+from backend.utils.paths import (
+    get_app_root,
+    get_captures_directory,
+    get_data_directory,
+    get_history_directory,
+)
 
 logger = logging.getLogger(__name__)
 
-MEDIA_ROOT = get_data_directory()
-CAPTURES_DIRECTORY = MEDIA_ROOT / "captures"
-RESULTS_DIRECTORY = MEDIA_ROOT / "results"
 CAPTURE_FILE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 
 
@@ -38,10 +40,18 @@ class ImageService:
         results_directory: Path | None = None,
         config_provider: Callable[[], AppConfig] | None = None,
     ) -> None:
-        self._captures_directory = captures_directory or CAPTURES_DIRECTORY
-        self._results_directory = results_directory or RESULTS_DIRECTORY
+        self._captures_directory_override = captures_directory
+        self._results_directory_override = results_directory
         self._config_provider = config_provider or get_config_service().get_config
         self._retention_lock = Lock()
+
+    @property
+    def _captures_directory(self) -> Path:
+        return self._captures_directory_override or get_captures_directory()
+
+    @property
+    def _results_directory(self) -> Path:
+        return self._results_directory_override or get_history_directory()
 
     def save_capture(self, frame: npt.NDArray[np.uint8]) -> Path:
         """Persist a BGR frame as a timestamped JPEG capture."""
@@ -107,11 +117,29 @@ class ImageService:
             return deleted
 
     def read_image(self, path: Path) -> npt.NDArray[np.uint8]:
-        """Read an image from disk as an OpenCV BGR array."""
+        """Read an image from disk as an OpenCV BGR array (Unicode-path safe)."""
         try:
-            image = cv2.imread(str(path), cv2.IMREAD_COLOR)
-        except cv2.error as exc:
-            logger.exception("OpenCV failed to read image: %s", path)
+            content = path.read_bytes()
+        except OSError as exc:
+            logger.exception("Failed to read image file: %s", path)
+            raise AppException(
+                message="Image could not be read",
+                code=ErrorCode.IMAGE_READ_FAILED,
+                status_code=422,
+            ) from exc
+
+        if not content:
+            raise AppException(
+                message="Image file is empty or unsupported",
+                code=ErrorCode.IMAGE_READ_FAILED,
+                status_code=422,
+            )
+
+        try:
+            encoded = np.frombuffer(content, dtype=np.uint8)
+            image = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+        except (ValueError, cv2.error) as exc:
+            logger.exception("OpenCV failed to decode image: %s", path)
             raise AppException(
                 message="Image could not be read",
                 code=ErrorCode.IMAGE_READ_FAILED,
@@ -193,7 +221,7 @@ class ImageService:
     def build_media_url(path: Path) -> str:
         """Map a runtime file below data/ to its public media URL."""
         try:
-            relative_path = path.resolve().relative_to(MEDIA_ROOT.resolve())
+            relative_path = path.resolve().relative_to(get_data_directory().resolve())
         except ValueError as exc:
             raise AppException(
                 message="Image is outside the configured media directory",
@@ -204,9 +232,9 @@ class ImageService:
 
     @staticmethod
     def build_project_path(path: Path) -> str:
-        """Return a portable project-relative path for API metadata."""
+        """Return a portable app-relative path for API metadata."""
         try:
-            relative_path = path.resolve().relative_to(get_project_root().resolve())
+            relative_path = path.resolve().relative_to(get_app_root().resolve())
         except ValueError:
             return path.name
         return relative_path.as_posix()

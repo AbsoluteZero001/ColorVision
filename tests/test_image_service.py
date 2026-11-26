@@ -1,4 +1,4 @@
-"""Image persistence and retention policy tests."""
+"""Image persistence, Unicode paths, and retention policy tests."""
 
 from __future__ import annotations
 
@@ -6,9 +6,13 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import numpy as np
 
 from backend.models.config import AppConfig
 from backend.services.image_service import ImageService
+from backend.utils.paths import APP_ROOT_ENV
 
 
 class ImageServiceRetentionTests(unittest.TestCase):
@@ -17,11 +21,11 @@ class ImageServiceRetentionTests(unittest.TestCase):
         directory: str,
         **config_values: int,
     ) -> ImageService:
-        captures = Path(directory) / "captures"
-        captures.mkdir()
+        captures = Path(directory) / "data" / "photos" / "captures"
+        captures.mkdir(parents=True)
         return ImageService(
             captures_directory=captures,
-            results_directory=Path(directory) / "results",
+            results_directory=Path(directory) / "data" / "history",
             config_provider=lambda: AppConfig(**config_values),
         )
 
@@ -72,6 +76,28 @@ class ImageServiceRetentionTests(unittest.TestCase):
             self.assertEqual(deleted, 1)
             self.assertFalse(old_file.exists())
             self.assertTrue(recent_file.exists())
+
+    def test_default_captures_save_under_data_photos_not_exe_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app_root = (Path(directory) / "测试目录" / "ColorVision").resolve()
+            app_root.mkdir(parents=True)
+            with patch.dict(os.environ, {APP_ROOT_ENV: str(app_root)}):
+                service = ImageService(config_provider=lambda: AppConfig())
+                frame = np.full((32, 48, 3), (40, 80, 120), dtype=np.uint8)
+                saved = service.save_capture(frame)
+
+                self.assertTrue(saved.is_file())
+                self.assertEqual(
+                    saved.parent.resolve(),
+                    (app_root / "data" / "photos" / "captures").resolve(),
+                )
+                self.assertNotEqual(saved.parent.resolve(), app_root)
+                self.assertEqual(
+                    service.build_media_url(saved),
+                    f"/media/photos/captures/{saved.name}",
+                )
+                decoded = service.read_image(saved)
+                self.assertEqual(decoded.shape, (32, 48, 3))
 
 
 if __name__ == "__main__":

@@ -1,24 +1,13 @@
-# 颜色识别系统 V1.5.0
+# 颜色识别系统（ColorVision）V1.5.0
 
-颜色识别系统是运行在 Windows 本机的颜色采集与识别系统。V1.5.0 提供独立单文件（onefile）EXE，
-所有后端服务、OpenCV 依赖与 Vue 前端生产资源全部集成在单个可执行文件内，无需解压压缩包或保留额外依赖文件夹，
-最终用户不需要安装 Python、Node.js 或 npm。
-
-V1.5.0 保留前端启动与摄像头初始化解耦，采用浏览器原生摄像头采集与 Mock Camera 兜底，
-即使没有摄像头、摄像头被占用或运行中断开，FastAPI 与 Vue 页面仍会正常启动，并显示可恢复的 Camera 状态。
-
-V1.5.0 延续本地 SQLite 上传日志、图片预览、颜色参数记录、单一纯色块结果展示和日志留存策略。
-
-为保持既有标识兼容性，应用技术名称与发布文件仍使用
-`ColorVision` / `ColorVision-v1.5.0-win-x64.exe`；界面和文档中的正式名称统一为
-“颜色识别系统”。
+颜色识别系统是运行在 Windows 本机的颜色采集与识别系统。应用采用统一父目录架构与 Windows 标准安装程序（`ColorVision_Setup.exe`）交付，所有程序主体、运行依赖、配置、图片、上传历史、本地数据库、缓存和运行日志均集中存放在同一个安装父目录中，不向 `AppData` 或系统分散目录写入业务数据，普通用户无需管理员权限即可日常启动和使用。
 
 完整流程：
 
 ```text
-双击 ColorVision-v1.5.0-win-x64.exe
-  -> 自解压内置运行时并启动本地 FastAPI
-  -> 托管 Vue 生产页面
+双击桌面快捷方式 ColorVision
+  -> 启动安装目录中的 ColorVision.exe（加载 _internal 依赖）
+  -> 启动本地 FastAPI 并托管 Vue 生产页面
   -> 自动打开默认浏览器
   -> 检测浏览器或 Mock 摄像头
   -> 摄像头实时画面
@@ -27,85 +16,85 @@ V1.5.0 延续本地 SQLite 上传日志、图片预览、颜色参数记录、�
   -> Mock 或真实 API 上传
 ```
 
-## EXE 使用
+## 安装与目录结构
 
-发布产物：
+运行安装程序 `ColorVision_Setup.exe`：
 
-```text
-dist/ColorVision-v1.5.0-win-x64.exe
-```
+1. 默认安装路径为 `D:\ColorVision`（若本机不存在可用 D 盘，安装向导会自动提示并切换至其他可用磁盘；支持自定义任意有效子目录）。
+2. 安装过程中会合理设置 `config`、`data`、`cache` 和 `logs` 的普通用户写入（Modify）权限，不赋予整块磁盘完全控制权限。
+3. 安装完成后会自动在桌面创建 `ColorVision.lnk` 快捷方式（指向 `<安装目录>\ColorVision.exe` 并配置正确工作目录与图标），并在开始菜单创建启动与卸载入口。
+4. 双击桌面快捷方式即可由普通用户直接启动，无需每次以管理员身份运行。
 
-使用步骤：
-
-1. 将 `ColorVision-v1.5.0-win-x64.exe` 放在任意本地目录（所有运行依赖和前端页面均已集成在 EXE 内部，无需额外文件夹或压缩包）。
-2. 双击 `ColorVision-v1.5.0-win-x64.exe`。
-3. 等待默认浏览器自动打开 `http://127.0.0.1:8000/`。
-4. 系统会自动请求并打开可用摄像头；没有设备时可切换到 Mock Camera。
-5. 点击“拍照”，在图片上拖动 ROI。
-6. 点击“识别颜色”，查看 RGB、LAB 和 HEX。
-7. 点击“上传服务器”完成 Mock 或真实 API 上传。
-8. 在“日志”页面查看北京时间、上传图片、ROI 图片和颜色参数。
-9. 在“设置”页面点击“退出颜色识别系统”可正确释放资源并关闭服务。
-
-重复双击 EXE 时，程序会检测现有服务并提示颜色识别系统已经在运行。
-
-## 首次运行目录
-
-第一次运行会在 EXE 同级自动生成：
+安装完成后，所有文件统一集中在同一个父目录下：
 
 ```text
-<EXE 所在目录>/
-├── config/
-│   └── config.json
-└── data/
-    ├── captures/
-    ├── results/
-    └── logs/
-        ├── colorvision.db
-        ├── colorvision.log
-        └── images/
+D:\ColorVision\
+│
+├── ColorVision.exe              # 主程序入口
+│
+├── _internal\                   # PyInstaller 运行依赖、DLL 与前端资源
+│
+├── config\                      # 统一配置目录
+│   ├── app.json                 # 安装路径、端口、留存策略与日志配置
+│   ├── api-config.json          # 上传 API URL、Token、超时与 Mock 模式配置
+│   └── camera.json              # 摄像头标识等设备配置
+│
+├── data\                        # 业务数据目录
+│   ├── photos\
+│   │   ├── captures\            # 拍照保存的本地图片
+│   │   └── uploads\             # 上传日志关联的原图与识别区域图
+│   ├── history\                 # 上传历史 JSON 快照记录
+│   └── database\
+│       └── colorvision.db       # SQLite 本地数据库
+│
+├── cache\                       # 统一运行时缓存目录
+│
+├── logs\                        # 统一运行日志目录（colorvision.log）
+│
+└── README.md                    # 使用说明
 ```
 
-默认配置：
+> 说明：程序内部通过 `backend/utils/paths.py` 动态识别当前安装根目录（不写死 `D:\ColorVision`，也不受工作目录变化影响）。无论安装到 `D:\ColorVision` 还是 `E:\Software\ColorVision`，所有子目录均根据实际安装路径动态定位。
 
-```json
-{
-  "api_url": "http://127.0.0.1:9000/api/color",
-  "token": "",
-  "camera_id": "CAM-001",
-  "auto_upload": false,
-  "mock_mode": true,
-  "timeout": 10.0,
-  "port": 8000,
-  "image_retention_days": 0,
-  "max_image_count": 0,
-  "log_enabled": true,
-  "log_image_storage_enabled": true,
-  "log_retention_days": 0,
-  "max_log_count": 0
-}
-```
+## 升级与卸载
 
-配置说明：
+- **覆盖升级**：直接运行新版本 `ColorVision_Setup.exe` 到原安装目录，仅更新 `ColorVision.exe`、`_internal\` 和 `README.md`，自动保留已有 `config\`、`data\`（含历史图片、上传历史和数据库）及 `logs\`。旧版 `config/config.json` 与 `data/logs/colorvision.db` 在首次启动时也会自动迁移至新目录结构。
+- **程序卸载**：卸载默认仅删除程序主体与快捷方式，**自动保留 `config\`、`data\`、历史图片与本地数据库**；卸载完成时会提供可选项确认是否清理整个 ColorVision 文件夹，并在选择完全清理前给出明确的数据删除警告。
 
-- `api_url`：真实上传 API 地址。
-- `token`：以 `Authorization: Bearer <token>` 发送，可为空。
-- `camera_id`：上传数据中的设备标识。
-- `auto_upload`：颜色识别完成后自动上传。
-- `mock_mode`：`true` 时不访问外部服务器。
-- `timeout`：外部 API 超时时间，单位秒。
-- `port`：本地服务端口，修改后需要重启 EXE。
-- `image_retention_days`：拍摄图片保留天数，设为 `0` 时不按时间清理。
-- `max_image_count`：拍摄图片最大保留数量，设为 `0` 时不按数量清理。
-- `log_enabled`：上传成功后是否写入本地上传日志。
-- `log_image_storage_enabled`：日志是否在本机保存上传原图和识别区域图。
-- `log_retention_days`：日志保留天数，设为 `0` 时不按时间清理。
-- `max_log_count`：日志最大条数，设为 `0` 时不按数量清理。
+## 使用步骤
 
-也可以使用环境变量指定其他配置文件：
+1. 双击桌面快捷方式 `ColorVision`。
+2. 等待默认浏览器自动打开 `http://127.0.0.1:8000/`。
+3. 系统会自动请求并打开可用摄像头；没有设备时可切换到 Mock Camera。
+4. 点击“拍照”，在图片上拖动 ROI。
+5. 点击“识别颜色”，查看 RGB、LAB 和 HEX。
+6. 点击“上传服务器”完成 Mock 或真实 API 上传。
+7. 在“日志”页面查看北京时间、上传图片、ROI 图片和颜色参数。
+8. 在“设置”页面修改并持久化 API 与设备参数，或点击“退出颜色识别系统”优雅释放资源并关闭服务。
+
+## 配置说明
+
+配置文件统一存放在 `<安装目录>\config\`：
+
+1. **`config/app.json`**
+   - `app_name` / `version` / `install_dir`：应用标识与实际安装根目录。
+   - `port`：本地服务端口（默认 `8000`，修改后需重启）。
+   - `image_retention_days` / `max_image_count`：拍照图片留存策略（`0` 表示不自动清理）。
+   - `log_enabled` / `log_image_storage_enabled` / `log_retention_days` / `max_log_count`：上传日志与留存策略。
+2. **`config/api-config.json`**
+   - `api_url`：真实上传 API 地址。
+   - `token`：以 `Authorization: Bearer <token>` 发送，可为空。
+   - `auto_upload`：颜色识别完成后自动上传。
+   - `mock_mode`：`true` 时使用本地模拟上传，不访问外部服务器。
+   - `timeout`：外部 API 超时时间（秒）。
+3. **`config/camera.json`**
+   - `camera_id`：上传数据中的摄像头设备标识。
+
+也可以使用环境变量指定自定义根目录或覆盖配置文件：
 
 ```powershell
-$env:COLORVISION_CONFIG = "D:\ColorVisionData\config.json"
+$env:COLORVISION_ROOT = "E:\Software\ColorVision"
+$env:COLORVISION_CONFIG = "E:\Custom\config.json"
 ```
 
 ## Camera 状态与容错
@@ -123,126 +112,22 @@ CameraService 支持以下状态：
 | `read_failed` | 当前帧读取失败 | 重新检测、使用 Mock |
 | `mock` | Mock Camera 正在运行 | 拍照、切回真实摄像头 |
 
-重新检测和重连会先释放旧 `VideoCapture`，再枚举设备并重新打开，所有生命周期操作会串行执行，
-避免快速重复点击造成重复打开或资源泄漏。
+## 上传日志与运行日志
 
-设备只有连续读取到尺寸有效且包含可见内容的视频帧后才会进入 `available`；仅
-`VideoCapture.isOpened()` 成功不会被判定为可用摄像头。Windows 摄像头驱动在无设备时
-可能打开占位视频源并持续返回全黑帧，因此连续全黑或近全黑画面会被视为无效帧。
+- 上传记录索引：`data/database/colorvision.db`
+- 上传历史快照：`data/history/upload_*.json`
+- 拍照与上传图片：`data/photos/captures/`、`data/photos/uploads/`
+- 运行日志：`logs/colorvision.log`
+- 运行时缓存：`cache/`
 
-## Mock Camera 与 Mock Upload
-
-这两项是独立功能：
-
-- Mock Camera：代替摄像头提供动态测试画面，不依赖 USB 摄像头。
-- Mock Upload：`mock_mode=true` 时模拟上传服务器响应，不访问外部 API。
-
-当前配置文件中的 `mock_mode` 仍只控制上传行为。Mock Camera 由页面按钮或 Camera API 控制。
-
-## 颜色采集准确性
-
-当前版本不启用软件端白平衡、曝光增益或灰度世界校正。摄像头驱动负责自动白平衡和曝光，
-避免软件二次校正与设备校正叠加后产生不可重复的颜色偏移。采集到的 BGR 图像按设备输出的
-sRGB 图像处理，再按 BGR → RGB → CIELAB 的标准顺序转换。
-
-ROI 采样先排除过暗和过亮像素，再用中位数/MAD 去除局部高光、阴影或 JPEG 噪声等离群点，
-最后对剩余像素取均值。该流程用于提高同一颜色在不同照片中的一致性，不做主观“增强颜色”。
-CIELAB 使用 float32 sRGB 和 D65 白点计算，避免 OpenCV uint8 LAB 的量化与偏移误差。
-
-如果后续需要标准色卡级别的绝对色差报告，应在固定光源下锁定摄像头白平衡和曝光，并使用
-经过认证的标准色卡建立设备级校准矩阵；这些步骤尚未加入当前配置流程。
-
-## Mock 上传与真实 API
-
-Mock 上传模式：
-
-```json
-{
-  "mock_mode": true
-}
-```
-
-页面会显示类似：
-
-```json
-{
-  "success": true,
-  "message": "Mock upload success",
-  "request_id": "MOCK-20260914-0001"
-}
-```
-
-真实 API 模式：
-
-```json
-{
-  "api_url": "http://your-server/api/color",
-  "token": "your-token",
-  "mock_mode": false,
-  "timeout": 10
-}
-```
-
-上传使用 `multipart/form-data`，包含：
-
-- `original_image`
-- `roi_image`
-- `rgb`
-- `lab`
-- `hex`
-- `roi`
-- `camera_id`
-- `timestamp`
-
-后端会处理超时、HTTP 状态码、无效 JSON 和网络异常。
-
-## 上传日志与隐私
-
-前端主导航依次为“工作台”“日志”“设置”。上传成功后，日志页按北京时间
-（UTC+8，精确到秒）倒序显示：
-
-- 上传原图
-- 颜色识别区域图
-- RGB、CIELAB、HEX 和 ROI 参数
-- Camera ID、上传模式和请求 ID
-
-日志数据只保存在本机：
-
-```text
-data/logs/colorvision.db       # SQLite 日志索引，仅包含结构化参数
-data/logs/images/              # 原图和识别区域图
-```
-
-首次启动自动创建 `upload_logs` 表和上述图片目录，不写入任何初始数据。
-应用不会把日志上传到外部服务器；关闭“保存日志图片”后，后续日志只保留
-颜色参数。日志页支持单条删除和全部清空，设置页可配置保留天数与最大条数。
-
-## 运行日志
-
-日志位置：
-
-```text
-data/logs/colorvision.log
-```
-
-日志包含：
-
-- 服务启动与停止
-- 摄像头扫描、打开与关闭
-- 拍照文件保存
-- ROI 颜色分析
-- Mock 或真实 API 上传
-- 配置迁移与错误
-- 未处理异常
-
-EXE 为无控制台窗口模式，正常运行不会持续弹出控制台日志。
+应用不会自动向 `AppData` 写入配置或业务数据，也不会将图片保存到安装根目录。
 
 ## 开发模式
 
-### 安装
+### 安装依赖
 
 ```powershell
-py -3.11 -m venv .venv
+py -3.13 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
@@ -252,69 +137,25 @@ npm install
 Set-Location ..
 ```
 
-### 启动
-
-同时启动 FastAPI 和 Vite：
+### 启动开发服务
 
 ```powershell
 .\scripts\dev.ps1
 ```
 
-也可以使用生产式统一入口：
+或使用统一后端入口（托管 `frontend/dist`）：
 
 ```powershell
 python backend/main.py
 ```
 
-该入口默认绑定 `127.0.0.1:8000`，不使用 `--reload`，并直接托管
-`frontend/dist`。
-
-开发接口文档：
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-Vite 开发服务器仍可用于前端热更新：
-
-```powershell
-Set-Location .\frontend
-npm run dev
-```
-
-开发服务器地址为 `http://127.0.0.1:5173`。这是唯一仍使用 5173 的场景。
-
 ## 自动化测试
-
-运行全部测试、真实摄像头测试和前端生产构建：
-
-```powershell
-.\scripts\test.ps1
-```
-
-跳过摄像头：
 
 ```powershell
 .\scripts\test.ps1 -SkipCamera
 ```
 
-测试覆盖：
-
-- 健康检查、Swagger 和 Vue 托管
-- 纯红、纯绿、纯蓝、白色、黑色
-- RGB、LAB、HEX 范围、通道顺序和标准 sRGB/D65 基准值
-- 含局部高光与噪声的 ROI 稳健采样
-- ROI 零尺寸和越界校验
-- 配置默认值、持久化和旧字段迁移
-- Mock 上传响应
-- 无摄像头、设备占用和运行中断开状态
-- 640×480、1280×720、1920×1080 分辨率元数据
-- Windows DSHOW/MSMF 摄像头后端选择
-- PyInstaller 外部配置、打包资源和前端静态资源路径
-- Mock Camera 拍照、存储与静态预览
-- 真实摄像头拍照、存储与静态预览
-
-## 构建 EXE
+## 构建与打包（`ColorVision.exe` 与 `ColorVision_Setup.exe`）
 
 ```powershell
 .\scripts\build.ps1
@@ -322,29 +163,10 @@ npm run dev
 
 构建流程：
 
-1. 执行 Vue TypeScript 检查和 `npm run build`。
-2. 校验 `frontend/dist/index.html` 和 `frontend/dist/assets` 是否完整。
-3. 使用 `colorvision.spec` 将后端、OpenCV、Python 依赖、Vue 资源和 Windows 版本信息打包为单个 onefile EXE。
-4. 在 `build/release-staging` 中生成单文件 `ColorVision-v1.5.0-win-x64.exe`。
-5. 通过 PyInstaller `CArchiveReader` 校验 EXE 内嵌的 `backend/config/config.json`、`frontend/dist/index.html` 和 `frontend/dist/assets/*`。
-6. 将单文件 EXE 输出到 `dist/ColorVision-v1.5.0-win-x64.exe`，不生成额外文件夹或 ZIP 压缩包。
-7. 清理临时 staging/work 目录。
-
-输出：
-
-```text
-dist/ColorVision-v1.5.0-win-x64.exe
-```
-
-EXE 文件名和 Windows 版本资源自动读取 `backend.__version__`，升级版本后无需手工修改构建脚本。
-
-只构建前端：
-
-```powershell
-.\scripts\build.ps1 -FrontendOnly
-```
-
-项目使用 single-file（onefile）模式发布，所有依赖与前端资源均已内嵌在单个 EXE 中，可直接分发运行。
+1. 编译并校验前端 Vue 生产构建（`frontend/dist`）。
+2. 使用 `colorvision.spec`（PyInstaller `onedir` 模式）打包出 `ColorVision.exe` 与 `_internal\` 依赖目录，并内嵌 `assets/ColorVision.ico` 图标与版本信息。
+3. 生成干净的统一目录结构到 `dist/ColorVision/`。
+4. 调用 Inno Setup 6（`ISCC.exe`）编译 `installer/ColorVision.iss`，生成最终安装程序 `dist/ColorVision_Setup.exe`。
 
 ## API 概览
 
@@ -364,67 +186,9 @@ EXE 文件名和 Windows 版本资源自动读取 `backend.__version__`，升级
 | POST | `/api/color/analyze` | ROI 颜色分析 |
 | POST | `/api/upload` | Mock 或真实上传 |
 | GET | `/api/logs` | 分页读取本地上传日志 |
-| DELETE | `/api/logs/{id}` | 删除单条日志及其图片 |
-| DELETE | `/api/logs` | 清空全部日志及图片 |
+| DELETE | `/api/logs/{id}` | 删除单条日志及其图片与历史 |
+| DELETE | `/api/logs` | 清空全部日志、图片与历史 |
 | POST | `/api/system/shutdown` | 托管模式优雅退出 |
-
-## 摄像头故障排查
-
-1. 关闭 Windows 相机、Teams、Zoom、浏览器会议等可能占用摄像头的程序。
-2. 检查 Windows 设置中的“隐私和安全性 -> 相机”权限。
-3. 重新插拔 USB 摄像头。
-4. 确认没有重复运行的 `ColorVision` 进程。
-5. 查看 `data/logs/colorvision.log` 中的摄像头错误。
-6. 使用 Windows“相机”应用确认设备本身可以工作。
-
-当前版本只允许一台进程打开一台摄像头。不同时支持多摄像头并发采集。
-
-## 常见错误
-
-`CAMERA_OPEN_FAILED`：
-
-摄像头不存在、驱动不可用，或者已被其他程序占用。
-
-`CAMERA_DEVICE_BUSY`：
-
-摄像头可能正在被其他相机、会议或浏览器程序占用。
-
-`CAMERA_DRIVER_ERROR`：
-
-OpenCV 或摄像头驱动在打开、配置设备时发生异常。
-
-`CAMERA_DISCONNECTED`：
-
-摄像头运行过程中断开，重新连接设备后可再次检测。
-
-`CAMERA_READ_FAILED`：
-
-摄像头仍被打开，但当前帧读取失败。
-
-`CAPTURE_FAILED`：
-
-摄像头已连接，但当前帧读取失败。重新打开摄像头或重新插拔设备。
-
-`INVALID_ROI`：
-
-ROI 宽高为 0，或者选区超出原图范围。
-
-`IMAGE_READ_FAILED`：
-
-上传图片为空、格式不支持或超过 25 MB。
-
-`API_TIMEOUT`：
-
-外部 API 在配置的 `timeout` 时间内未响应。
-
-`API_REQUEST_FAILED`：
-
-外部 API 网络失败、返回非 2xx，或返回了无效 JSON。
-
-`端口已被其他程序占用`：
-
-关闭占用端口的程序，或者修改 `config/config.json` 中的 `port` 后重启。
-
 
 ## Code signing policy
 

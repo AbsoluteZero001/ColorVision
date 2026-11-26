@@ -4,13 +4,21 @@
 
 ### Changed
 
-- 打包方式由 PyInstaller onedir + ZIP 压缩包改为单文件（onefile）EXE（`ColorVision-v1.5.0-win-x64.exe`），所有后端依赖、OpenCV 与 Vue 前端生产资源全部集成在单个可执行文件内，无需解压或保留额外目录。
-- 将应用版本统一升级为 V1.5.0，构建脚本通过 `CArchiveReader` 自动校验 EXE 内嵌前端资源与默认配置。
+- 调整安装部署与存储架构为统一父目录管理方案，移除单文件运行时向 `AppData\Local\Temp` 的自解压行为，改用 PyInstaller `onedir`（`ColorVision.exe` + `_internal\`）与 Inno Setup 安装包（`ColorVision_Setup.exe`）。
+- 统一由 `backend/utils/paths.py` 动态解析安装根目录与子目录（支持任意安装路径且不依赖工作目录），禁止将配置和业务数据自动写入 `AppData` 或将图片写入根目录：
+  - `config/`：`app.json`、`api-config.json`、`camera.json`（兼容自动迁移旧版 `config/config.json`）。
+  - `data/photos/`：`captures/`（拍照图片）与 `uploads/`（上传日志图片）。
+  - `data/history/`：上传历史 JSON 快照记录。
+  - `data/database/`：`colorvision.db` 本地 SQLite 数据库（兼容自动迁移旧版 `data/logs/colorvision.db`）。
+  - `cache/`：运行时缓存目录。
+  - `logs/`：`colorvision.log` 运行日志目录。
+- 更新 `ColorVision.exe` 与安装程序使用自研多分辨率应用图标（`assets/ColorVision.ico`）。
 - 前端摄像头采集采用浏览器原生 `navigator.mediaDevices` 实现，支持虚拟摄像头自动过滤、移动端优先后置摄像头以及实时分辨率/FPS/方向展示，并保留 Mock Camera 切换支持。
 - 优化 ROI 选择器指针事件与触摸热区，支持选区外页面滚动及拖拽/缩放交互。
 
 ### Added
 
+- 新增 Windows 安装脚本 `installer/ColorVision.iss` 及图标 `assets/ColorVision.ico`，默认安装至 `D:\ColorVision`（D 盘不可用时自动提示并切换其他可用磁盘，支持自定义路径），自动创建桌面与开始菜单快捷方式、配置目录普通用户读写权限，并支持覆盖升级保留数据与卸载默认保留用户数据/可选完全清理。
 - 新增 GitHub Actions 生产部署工作流（`.github/workflows/deploy.yml`）。
 - 新增项目隐私政策文档（`PRIVACY.md`）。
 

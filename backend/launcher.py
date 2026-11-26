@@ -32,11 +32,16 @@ from backend.runtime import (
 )
 from backend.services.config_service import get_config_service
 from backend.utils.logging_utils import setup_logging
-from backend.utils.paths import ensure_runtime_directories
+from backend.utils.paths import (
+    ensure_runtime_directories,
+    get_app_root,
+    get_cache_directory,
+)
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 STARTUP_TIMEOUT_SECONDS = 20.0
+APP_MUTEX_NAME = "ColorVision_App_Running"
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +125,63 @@ def _wait_for_server(
     return False
 
 
+def _acquire_app_mutex() -> int | None:
+    """Acquire a Windows named mutex so installers detect active instances."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        handle = ctypes.windll.kernel32.CreateMutexW(None, False, APP_MUTEX_NAME)
+        return int(handle) if handle else None
+    except Exception:
+        logger.debug("Could not acquire Windows app mutex", exc_info=True)
+        return None
+
+
+def _release_app_mutex(handle: int | None) -> None:
+    if handle is None or os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.kernel32.CloseHandle(handle)
+    except Exception:
+        logger.debug("Could not release Windows app mutex", exc_info=True)
+
+
+def _write_runtime_cache(port: int) -> Path | None:
+    """Persist lightweight session metadata under the unified cache directory."""
+    cache_file = get_cache_directory() / "runtime-session.json"
+    payload = {
+        "app": APP_NAME,
+        "version": __version__,
+        "pid": os.getpid(),
+        "port": port,
+        "app_root": str(get_app_root()),
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return cache_file
+    except OSError:
+        logger.warning("Could not write runtime session cache: %s", cache_file)
+        return None
+
+
+def _remove_runtime_cache(cache_file: Path | None) -> None:
+    if cache_file is None:
+        return
+    try:
+        cache_file.unlink(missing_ok=True)
+    except OSError:
+        logger.debug("Could not remove runtime session cache: %s", cache_file)
+
+
 def main() -> int:
     """Start the application, open the browser, and wait for graceful shutdown."""
     setup_logging()
@@ -169,12 +231,13 @@ def main() -> int:
     if _port_is_in_use(port):
         message = (
             f"端口 {port} 已被其他程序占用。\n"
-            "请关闭占用端口的程序，或修改 config/config.json 中的 port。"
+            "请关闭占用端口的程序，或修改 config/app.json 中的 port。"
         )
         logger.error(message.replace("\n", " "))
         _show_message(message, f"{APP_NAME} 启动失败", error=True)
         return 1
 
+    mutex_handle = _acquire_app_mutex()
     set_managed_runtime(True)
     reset_shutdown()
     server = uvicorn.Server(
@@ -200,14 +263,16 @@ def main() -> int:
         request_shutdown()
         server.should_exit = True
         server_thread.join(timeout=10)
+        _release_app_mutex(mutex_handle)
         message = (
             f"{APP_NAME} 本地服务未能在端口 {port} 正常启动。\n"
-            "请查看 data/logs/colorvision.log。"
+            "请查看 logs/colorvision.log。"
         )
         logger.error(message.replace("\n", " "))
         _show_message(message, f"{APP_NAME} 启动失败", error=True)
         return 1
 
+    runtime_cache_file = _write_runtime_cache(port)
     logger.info("%s service ready: %s", APP_NAME, application_url)
     _open_browser(application_url)
 
@@ -223,6 +288,8 @@ def main() -> int:
         server_thread.join(timeout=10)
         if server_thread.is_alive():
             logger.warning("Server thread did not stop within 10 seconds")
+        _remove_runtime_cache(runtime_cache_file)
+        _release_app_mutex(mutex_handle)
 
     logger.info("%s process stopped", APP_NAME)
     return 0

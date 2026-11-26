@@ -13,13 +13,22 @@ frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 
-# Runtime data
+# Runtime data and local unified directories
+/config/
+/cache/
+/logs/
 data/captures/*
 !data/captures/.gitkeep
 data/results/*
 !data/results/.gitkeep
 data/logs/*
 !data/logs/.gitkeep
+data/photos/*
+!data/photos/.gitkeep
+data/history/*
+!data/history/.gitkeep
+data/database/*
+!data/database/.gitkeep
 
 # Build outputs
 build/*

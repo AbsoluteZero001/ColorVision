@@ -236,10 +236,16 @@ class ApiIntegrationTests(unittest.TestCase):
 
         captured = self.client.post("/api/camera/capture")
         self.assertEqual(captured.status_code, 200, captured.text)
+        image_path = Path(captured.json()["data"]["image_path"])
         image_url = captured.json()["data"]["image_url"]
-        preview = self.client.get(image_url)
-        self.assertEqual(preview.status_code, 200)
-        self.assertEqual(preview.headers["content-type"], "image/jpeg")
+        try:
+            self.assertTrue(image_url.startswith("/media/photos/captures/"))
+            preview = self.client.get(image_url)
+            self.assertEqual(preview.status_code, 200)
+            self.assertEqual(preview.headers["content-type"], "image/jpeg")
+        finally:
+            if image_path.is_file():
+                image_path.unlink()
 
         closed = self.client.post("/api/camera/close")
         self.assertEqual(closed.status_code, 200, closed.text)

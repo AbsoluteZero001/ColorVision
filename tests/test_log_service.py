@@ -1,18 +1,22 @@
-"""SQLite upload-log persistence and retention tests."""
+"""SQLite upload-log, history JSON, photo storage, and legacy migration tests."""
 
 from __future__ import annotations
 
+import json
+import os
 import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from backend.models.config import AppConfig
 from backend.models.upload import UploadResultData
 from backend.services.log_service import LogService
 from backend.services.upload_service import UploadPayload
+from backend.utils.paths import APP_ROOT_ENV
 
 
 def make_payload() -> UploadPayload:
@@ -47,8 +51,12 @@ class LogServiceTests(unittest.TestCase):
         directory: str,
         **config_values: object,
     ) -> LogService:
+        data_dir = Path(directory) / "data"
         return LogService(
-            logs_directory=Path(directory) / "data" / "logs",
+            database_path=data_dir / "database" / "colorvision.db",
+            images_directory=data_dir / "photos" / "uploads",
+            history_directory=data_dir / "history",
+            data_directory=data_dir,
             config_provider=lambda: AppConfig(**config_values),
             now_provider=lambda: datetime(
                 2026,
@@ -75,7 +83,7 @@ class LogServiceTests(unittest.TestCase):
             self.assertEqual(row_count, 0)
             self.assertEqual(service.list_entries().total, 0)
 
-    def test_record_lists_beijing_time_and_local_images(self) -> None:
+    def test_record_lists_beijing_time_and_local_images_and_history(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             service = self._create_service(
                 directory,
@@ -98,18 +106,24 @@ class LogServiceTests(unittest.TestCase):
             self.assertIsNotNone(page.items[0].roi_image_url)
             self.assertTrue(
                 page.items[0].original_image_url.startswith(
-                    "/media/logs/images/"
+                    "/media/photos/uploads/"
                 )
             )
             self.assertTrue(
                 page.items[0].roi_image_url.startswith(
-                    "/media/logs/images/"
+                    "/media/photos/uploads/"
                 )
             )
             self.assertEqual(
                 len(list(service.images_directory.glob("*.jpg"))),
                 2,
             )
+            history_files = list(service.history_directory.glob("upload_*.json"))
+            self.assertEqual(len(history_files), 1)
+            history_payload = json.loads(
+                history_files[0].read_text(encoding="utf-8")
+            )
+            self.assertEqual(history_payload["request_id"], "MOCK-20260915-0001")
 
     def test_image_storage_can_be_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -126,7 +140,7 @@ class LogServiceTests(unittest.TestCase):
             self.assertIsNone(entry.roi_image_url)
             self.assertEqual(list(service.images_directory.iterdir()), [])
 
-    def test_delete_and_clear_remove_associated_images(self) -> None:
+    def test_delete_and_clear_remove_associated_images_and_history(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             service = self._create_service(
                 directory,
@@ -137,6 +151,10 @@ class LogServiceTests(unittest.TestCase):
             second = service.record_upload(make_payload(), make_result("MOCK-2"))
             self.assertIsNotNone(first)
             self.assertIsNotNone(second)
+            self.assertEqual(
+                len(list(service.history_directory.glob("upload_*.json"))),
+                2,
+            )
 
             deleted = service.delete_entry(first.id)
 
@@ -144,6 +162,10 @@ class LogServiceTests(unittest.TestCase):
             self.assertEqual(
                 len(list(service.images_directory.glob("*.jpg"))),
                 2,
+            )
+            self.assertEqual(
+                len(list(service.history_directory.glob("upload_*.json"))),
+                1,
             )
             remaining = service.list_entries()
             self.assertEqual(remaining.total, 1)
@@ -154,6 +176,7 @@ class LogServiceTests(unittest.TestCase):
             self.assertEqual(cleared, 1)
             self.assertEqual(service.list_entries().total, 0)
             self.assertEqual(list(service.images_directory.iterdir()), [])
+            self.assertEqual(list(service.history_directory.iterdir()), [])
 
     def test_max_log_count_removes_oldest_entries_and_images(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -181,14 +204,22 @@ class LogServiceTests(unittest.TestCase):
                 len(list(service.images_directory.glob("*.jpg"))),
                 4,
             )
+            self.assertEqual(
+                len(list(service.history_directory.glob("upload_*.json"))),
+                2,
+            )
 
     def test_retention_days_removes_expired_entries(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             current_time = [
                 datetime(2026, 9, 15, 0, 0, 0, tzinfo=timezone.utc)
             ]
+            data_dir = Path(directory) / "data"
             service = LogService(
-                logs_directory=Path(directory) / "logs",
+                database_path=data_dir / "database" / "colorvision.db",
+                images_directory=data_dir / "photos" / "uploads",
+                history_directory=data_dir / "history",
+                data_directory=data_dir,
                 config_provider=lambda: AppConfig(
                     log_enabled=True,
                     log_image_storage_enabled=True,
@@ -223,8 +254,12 @@ class LogServiceTests(unittest.TestCase):
             current_time = [
                 datetime(2026, 9, 15, 0, 0, 0, tzinfo=timezone.utc)
             ]
+            data_dir = Path(directory) / "data"
             service = LogService(
-                logs_directory=Path(directory) / "logs",
+                database_path=data_dir / "database" / "colorvision.db",
+                images_directory=data_dir / "photos" / "uploads",
+                history_directory=data_dir / "history",
+                data_directory=data_dir,
                 config_provider=lambda: AppConfig(
                     log_enabled=True,
                     log_image_storage_enabled=True,
@@ -248,6 +283,54 @@ class LogServiceTests(unittest.TestCase):
             self.assertEqual(removed, 1)
             self.assertEqual(service.list_entries().total, 0)
             self.assertEqual(list(service.images_directory.iterdir()), [])
+            self.assertEqual(list(service.history_directory.iterdir()), [])
+
+    def test_unified_defaults_and_legacy_database_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app_root = (Path(directory) / "ColorVision").resolve()
+            legacy_logs_dir = app_root / "data" / "logs"
+            legacy_service = LogService(
+                logs_directory=legacy_logs_dir,
+                config_provider=lambda: AppConfig(
+                    log_enabled=True,
+                    log_image_storage_enabled=True,
+                ),
+            )
+            legacy_entry = legacy_service.record_upload(
+                make_payload(),
+                make_result("LEGACY-001"),
+            )
+            self.assertIsNotNone(legacy_entry)
+            self.assertTrue((legacy_logs_dir / "colorvision.db").is_file())
+
+            with patch.dict(os.environ, {APP_ROOT_ENV: str(app_root)}):
+                migrated_service = LogService(
+                    config_provider=lambda: AppConfig(
+                        log_enabled=True,
+                        log_image_storage_enabled=True,
+                    )
+                )
+                page = migrated_service.list_entries()
+
+            self.assertEqual(
+                migrated_service.database_path.resolve(),
+                (app_root / "data" / "database" / "colorvision.db").resolve(),
+            )
+            self.assertEqual(
+                migrated_service.images_directory.resolve(),
+                (app_root / "data" / "photos" / "uploads").resolve(),
+            )
+            self.assertEqual(page.total, 1)
+            self.assertEqual(page.items[0].request_id, "LEGACY-001")
+            self.assertTrue(
+                page.items[0].original_image_url.startswith(
+                    "/media/photos/uploads/"
+                )
+            )
+            self.assertEqual(
+                len(list(migrated_service.images_directory.glob("*.jpg"))),
+                2,
+            )
 
 
 if __name__ == "__main__":

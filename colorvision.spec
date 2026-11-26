@@ -31,6 +31,10 @@ def _version_tuple(version: str) -> tuple[int, int, int, int]:
 
 
 APP_VERSION = _version_tuple(__version__)
+ICON_PATH = PROJECT_ROOT / "assets" / "ColorVision.ico"
+if not ICON_PATH.is_file():
+    raise SystemExit(f"Application icon is missing: {ICON_PATH}")
+
 VERSION_INFO = VSVersionInfo(
     ffi=FixedFileInfo(
         filevers=APP_VERSION,
@@ -55,10 +59,7 @@ VERSION_INFO = VSVersionInfo(
                         ),
                         StringStruct("FileVersion", __version__),
                         StringStruct("InternalName", "ColorVision"),
-                        StringStruct(
-                            "OriginalFilename",
-                            f"ColorVision-v{__version__}-win-x64.exe",
-                        ),
+                        StringStruct("OriginalFilename", "ColorVision.exe"),
                         StringStruct("ProductName", "ColorVision"),
                         StringStruct("ProductVersion", __version__),
                     ],
@@ -172,21 +173,29 @@ python_archive = PYZ(analysis.pure)
 executable = EXE(
     python_archive,
     analysis.scripts,
-    analysis.binaries,
-    analysis.datas,
     [],
-    name=f"ColorVision-v{__version__}-win-x64",
+    exclude_binaries=True,
+    name="ColorVision",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(ICON_PATH),
     version=VERSION_INFO,
+)
+
+collection = COLLECT(
+    executable,
+    analysis.binaries,
+    analysis.datas,
+    strip=False,
+    upx=False,
+    contents_directory="_internal",
+    name="ColorVision",
 )
