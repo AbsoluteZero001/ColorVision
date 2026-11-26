@@ -56,11 +56,13 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($Version)) {
 
 $BuildRoot = Join-Path $ProjectRoot "build"
 $DistRoot = Join-Path $ProjectRoot "dist"
-$OutputRoot = Join-Path $DistRoot "ColorVision"
 $StagingRoot = Join-Path $BuildRoot "release-staging"
 $WorkRoot = Join-Path $BuildRoot "pyinstaller-v$Version"
-$StagedOutputRoot = Join-Path $StagingRoot "ColorVision"
-$ZipPath = Join-Path $DistRoot "ColorVision-v$Version-win-x64.zip"
+$ExeFileName = "ColorVision-v$Version-win-x64.exe"
+$StagedExecutablePath = Join-Path $StagingRoot $ExeFileName
+$FinalExecutablePath = Join-Path $DistRoot $ExeFileName
+$LegacyDirPath = Join-Path $DistRoot "ColorVision"
+$LegacyZipPath = Join-Path $DistRoot "ColorVision-v$Version-win-x64.zip"
 
 function Remove-SafeTree {
     param(
@@ -100,73 +102,56 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller build failed."
 }
 
-$ExecutablePath = Join-Path $StagedOutputRoot "ColorVision.exe"
-if (-not (Test-Path -LiteralPath $ExecutablePath)) {
-    throw "PyInstaller completed without producing the staged ColorVision.exe."
+if (-not (Test-Path -LiteralPath $StagedExecutablePath -PathType Leaf)) {
+    throw "PyInstaller completed without producing the staged single-file EXE: $StagedExecutablePath"
 }
 
-$Executable = Get-Item -LiteralPath $ExecutablePath
-$SizeMb = [Math]::Round($Executable.Length / 1MB, 2)
-$ReadmePath = Join-Path $ProjectRoot "README.md"
-$BundledFrontendRoot = Join-Path $StagedOutputRoot "_internal\frontend\dist"
-$BundledIndex = Join-Path $BundledFrontendRoot "index.html"
-$BundledAssets = Join-Path $BundledFrontendRoot "assets"
-$BundledAssetFiles = @(Get-ChildItem -LiteralPath $BundledAssets -File -Recurse -ErrorAction SilentlyContinue)
+$VerifyArchiveScript = @'
+import sys
+from PyInstaller.archive.readers import CArchiveReader
 
-if (-not (Test-Path -LiteralPath $BundledIndex -PathType Leaf)) {
-    throw "Packaged Vue entry is missing: $BundledIndex"
+exe_path = sys.argv[1]
+reader = CArchiveReader(exe_path)
+entries = {name.replace("\\", "/") for name in reader.toc}
+
+required = ("backend/config/config.json", "frontend/dist/index.html")
+for item in required:
+    if item not in entries:
+        raise SystemExit(f"Missing embedded resource in EXE: {item}")
+
+assets = [name for name in entries if name.startswith("frontend/dist/assets/")]
+if not assets:
+    raise SystemExit("Missing embedded Vue assets under frontend/dist/assets/")
+
+print(f"Verified {len(entries)} embedded archive entries ({len(assets)} frontend asset(s)).")
+'@
+
+$VerifyArchiveScript | & $Python - $StagedExecutablePath
+if ($LASTEXITCODE -ne 0) {
+    throw "Embedded resource verification failed for $StagedExecutablePath"
 }
 
-if (-not (Test-Path -LiteralPath $BundledAssets -PathType Container) -or $BundledAssetFiles.Count -eq 0) {
-    throw "Packaged Vue assets are missing or empty: $BundledAssets"
+if (Test-Path -LiteralPath $LegacyDirPath) {
+    Remove-SafeTree -Path $LegacyDirPath -AllowedRoot $DistRoot
+}
+if (Test-Path -LiteralPath $LegacyZipPath -PathType Leaf) {
+    Remove-Item -LiteralPath $LegacyZipPath -Force
 }
 
-if (Test-Path -LiteralPath $ReadmePath) {
-    Copy-Item -LiteralPath $ReadmePath -Destination (Join-Path $StagedOutputRoot "README.md") -Force
-}
+Copy-Item -LiteralPath $StagedExecutablePath -Destination $FinalExecutablePath -Force
 
-if (Test-Path -LiteralPath $ZipPath) {
-    Remove-Item -LiteralPath $ZipPath -Force
-}
-Compress-Archive `
-    -Path (Join-Path $StagedOutputRoot "*") `
-    -DestinationPath $ZipPath `
-    -CompressionLevel Optimal
-if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) {
-    throw "Versioned release ZIP was not generated: $ZipPath"
-}
-
-New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
-foreach ($Item in Get-ChildItem -LiteralPath $StagedOutputRoot -Force) {
-    if ($Item.Name -in @("config", "data")) {
-        continue
-    }
-
-    $TargetPath = Join-Path $OutputRoot $Item.Name
-    if (Test-Path -LiteralPath $TargetPath) {
-        Remove-SafeTree -Path $TargetPath -AllowedRoot $OutputRoot
-    }
-    Copy-Item `
-        -LiteralPath $Item.FullName `
-        -Destination $TargetPath `
-        -Recurse `
-        -Force
-}
-
-$FinalExecutablePath = Join-Path $OutputRoot "ColorVision.exe"
 if (-not (Test-Path -LiteralPath $FinalExecutablePath -PathType Leaf)) {
-    throw "Final ColorVision.exe is missing: $FinalExecutablePath"
-}
-
-$FinalBundledIndex = Join-Path $OutputRoot "_internal\frontend\dist\index.html"
-if (-not (Test-Path -LiteralPath $FinalBundledIndex -PathType Leaf)) {
-    throw "Final packaged Vue entry is missing: $FinalBundledIndex"
+    throw "Final single-file EXE is missing: $FinalExecutablePath"
 }
 
 Remove-SafeTree -Path $StagingRoot -AllowedRoot $BuildRoot
 Remove-SafeTree -Path $WorkRoot -AllowedRoot $BuildRoot
 
+$Executable = Get-Item -LiteralPath $FinalExecutablePath
+$SizeMb = [Math]::Round($Executable.Length / 1MB, 2)
+$Hash = (Get-FileHash -LiteralPath $FinalExecutablePath -Algorithm SHA256).Hash
+
 Write-Host "ColorVision version: $Version"
 Write-Host "ColorVision EXE: $FinalExecutablePath"
-Write-Host "ColorVision EXE size: $SizeMb MB"
-Write-Host "ColorVision ZIP: $ZipPath"
+Write-Host "ColorVision EXE size: $SizeMb MB ($($Executable.Length) bytes)"
+Write-Host "ColorVision EXE SHA-256: $Hash"

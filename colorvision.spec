@@ -54,6 +54,11 @@ VERSION_INFO = VSVersionInfo(
                             "ColorVision Color Recognition System",
                         ),
                         StringStruct("FileVersion", __version__),
+                        StringStruct("InternalName", "ColorVision"),
+                        StringStruct(
+                            "OriginalFilename",
+                            f"ColorVision-v{__version__}-win-x64.exe",
+                        ),
                         StringStruct("ProductName", "ColorVision"),
                         StringStruct("ProductVersion", __version__),
                     ],
@@ -167,13 +172,16 @@ python_archive = PYZ(analysis.pure)
 executable = EXE(
     python_archive,
     analysis.scripts,
+    analysis.binaries,
+    analysis.datas,
     [],
-    exclude_binaries=True,
-    name="ColorVision",
+    name=f"ColorVision-v{__version__}-win-x64",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
+    upx_exclude=[],
+    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -181,13 +189,4 @@ executable = EXE(
     codesign_identity=None,
     entitlements_file=None,
     version=VERSION_INFO,
-)
-
-collection = COLLECT(
-    executable,
-    analysis.binaries,
-    analysis.datas,
-    strip=False,
-    upx=False,
-    name="ColorVision",
 )

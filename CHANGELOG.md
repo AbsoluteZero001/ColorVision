@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.5.0] - 2026-11-26
+
+### Changed
+
+- 打包方式由 PyInstaller onedir + ZIP 压缩包改为单文件（onefile）EXE（`ColorVision-v1.5.0-win-x64.exe`），所有后端依赖、OpenCV 与 Vue 前端生产资源全部集成在单个可执行文件内，无需解压或保留额外目录。
+- 将应用版本统一升级为 V1.5.0，构建脚本通过 `CArchiveReader` 自动校验 EXE 内嵌前端资源与默认配置。
+- 前端摄像头采集采用浏览器原生 `navigator.mediaDevices` 实现，支持虚拟摄像头自动过滤、移动端优先后置摄像头以及实时分辨率/FPS/方向展示，并保留 Mock Camera 切换支持。
+- 优化 ROI 选择器指针事件与触摸热区，支持选区外页面滚动及拖拽/缩放交互。
+
+### Added
+
+- 新增 GitHub Actions 生产部署工作流（`.github/workflows/deploy.yml`）。
+- 新增项目隐私政策文档（`PRIVACY.md`）。
+
 ## [1.4.0] - 2026-09-15
 
 ### Added

@@ -1,27 +1,26 @@
-# 颜色识别系统 V1.4.0
+# 颜色识别系统 V1.5.0
 
-颜色识别系统是运行在 Windows 本机的颜色采集与识别系统。V1.4.0 提供可交付的 onedir EXE，
+颜色识别系统是运行在 Windows 本机的颜色采集与识别系统。V1.5.0 提供独立单文件（onefile）EXE，
+所有后端服务、OpenCV 依赖与 Vue 前端生产资源全部集成在单个可执行文件内，无需解压压缩包或保留额外依赖文件夹，
 最终用户不需要安装 Python、Node.js 或 npm。
 
-V1.4.0 新增本地 SQLite 上传日志、图片预览、颜色参数记录和日志留存策略。
+V1.5.0 保留前端启动与摄像头初始化解耦，采用浏览器原生摄像头采集与 Mock Camera 兜底，
+即使没有摄像头、摄像头被占用或运行中断开，FastAPI 与 Vue 页面仍会正常启动，并显示可恢复的 Camera 状态。
 
-V1.4.0 保留前端启动与摄像头初始化解耦。即使没有摄像头、摄像头被占用或运行中断开，
-FastAPI 与 Vue 页面仍会正常启动，并显示可恢复的 Camera 状态。
+V1.5.0 延续本地 SQLite 上传日志、图片预览、颜色参数记录、单一纯色块结果展示和日志留存策略。
 
-V1.4.0 继续使用单一纯色块展示颜色识别结果，并以本地文件形式保存日志图片。
-
-为保持既有安装路径和升级兼容性，发布目录与可执行文件仍使用
-`ColorVision` / `ColorVision.exe` 作为技术文件名；界面和文档中的正式名称统一为
+为保持既有标识兼容性，应用技术名称与发布文件仍使用
+`ColorVision` / `ColorVision-v1.5.0-win-x64.exe`；界面和文档中的正式名称统一为
 “颜色识别系统”。
 
 完整流程：
 
 ```text
-双击 ColorVision.exe
-  -> 启动本地 FastAPI
+双击 ColorVision-v1.5.0-win-x64.exe
+  -> 自解压内置运行时并启动本地 FastAPI
   -> 托管 Vue 生产页面
   -> 自动打开默认浏览器
-  -> 初始化 CameraService 并检测摄像头
+  -> 检测浏览器或 Mock 摄像头
   -> 摄像头实时画面
   -> 拍照与 ROI 框选
   -> RGB / LAB / HEX
@@ -30,35 +29,32 @@ V1.4.0 继续使用单一纯色块展示颜色识别结果，并以本地文件�
 
 ## EXE 使用
 
-发布目录：
+发布产物：
 
 ```text
-dist/ColorVision/
-├── ColorVision.exe
-├── README.md
-└── _internal/
+dist/ColorVision-v1.5.0-win-x64.exe
 ```
 
 使用步骤：
 
-1. 保持整个 `ColorVision` 目录完整，不要只复制 EXE。
-2. 双击 `ColorVision.exe`。
+1. 将 `ColorVision-v1.5.0-win-x64.exe` 放在任意本地目录（所有运行依赖和前端页面均已集成在 EXE 内部，无需额外文件夹或压缩包）。
+2. 双击 `ColorVision-v1.5.0-win-x64.exe`。
 3. 等待默认浏览器自动打开 `http://127.0.0.1:8000/`。
-4. 系统会自动检测并打开第一台可用摄像头；没有设备时可切换到 Mock Camera。
+4. 系统会自动请求并打开可用摄像头；没有设备时可切换到 Mock Camera。
 5. 点击“拍照”，在图片上拖动 ROI。
 6. 点击“识别颜色”，查看 RGB、LAB 和 HEX。
 7. 点击“上传服务器”完成 Mock 或真实 API 上传。
 8. 在“日志”页面查看北京时间、上传图片、ROI 图片和颜色参数。
-9. 在“设置”页面点击“退出颜色识别系统”可正确释放摄像头并关闭服务。
+9. 在“设置”页面点击“退出颜色识别系统”可正确释放资源并关闭服务。
 
 重复双击 EXE 时，程序会检测现有服务并提示颜色识别系统已经在运行。
 
 ## 首次运行目录
 
-第一次运行会在 EXE 同级生成：
+第一次运行会在 EXE 同级自动生成：
 
 ```text
-ColorVision/
+<EXE 所在目录>/
 ├── config/
 │   └── config.json
 └── data/
@@ -328,20 +324,19 @@ npm run dev
 
 1. 执行 Vue TypeScript 检查和 `npm run build`。
 2. 校验 `frontend/dist/index.html` 和 `frontend/dist/assets` 是否完整。
-3. 使用 `colorvision.spec` 收集后端、OpenCV、Python 依赖、Vue 资源和 Windows 版本信息。
-4. 在 `build/release-staging` 中生成 PyInstaller onedir 目录。
-5. 校验 staging 内的 EXE 和 Vue 资源。
-6. 生成版本化 ZIP，并只替换 `dist/ColorVision` 中的程序文件。
-7. 保留已有 `config/` 和 `data/`。
+3. 使用 `colorvision.spec` 将后端、OpenCV、Python 依赖、Vue 资源和 Windows 版本信息打包为单个 onefile EXE。
+4. 在 `build/release-staging` 中生成单文件 `ColorVision-v1.5.0-win-x64.exe`。
+5. 通过 PyInstaller `CArchiveReader` 校验 EXE 内嵌的 `backend/config/config.json`、`frontend/dist/index.html` 和 `frontend/dist/assets/*`。
+6. 将单文件 EXE 输出到 `dist/ColorVision-v1.5.0-win-x64.exe`，不生成额外文件夹或 ZIP 压缩包。
+7. 清理临时 staging/work 目录。
 
 输出：
 
 ```text
-dist/ColorVision/ColorVision.exe
-dist/ColorVision-v1.4.0-win-x64.zip
+dist/ColorVision-v1.5.0-win-x64.exe
 ```
 
-ZIP 文件名自动读取 `backend.__version__`，升级版本后无需手工修改构建脚本。
+EXE 文件名和 Windows 版本资源自动读取 `backend.__version__`，升级版本后无需手工修改构建脚本。
 
 只构建前端：
 
@@ -349,7 +344,7 @@ ZIP 文件名自动读取 `backend.__version__`，升级版本后无需手工修
 .\scripts\build.ps1 -FrontendOnly
 ```
 
-项目使用 onedir，不使用 onefile。稳定性优先于单文件体积。
+项目使用 single-file（onefile）模式发布，所有依赖与前端资源均已内嵌在单个 EXE 中，可直接分发运行。
 
 ## API 概览
 
@@ -378,7 +373,7 @@ ZIP 文件名自动读取 `backend.__version__`，升级版本后无需手工修
 1. 关闭 Windows 相机、Teams、Zoom、浏览器会议等可能占用摄像头的程序。
 2. 检查 Windows 设置中的“隐私和安全性 -> 相机”权限。
 3. 重新插拔 USB 摄像头。
-4. 确认没有重复运行的 `ColorVision.exe`。
+4. 确认没有重复运行的 `ColorVision` 进程。
 5. 查看 `data/logs/colorvision.log` 中的摄像头错误。
 6. 使用 Windows“相机”应用确认设备本身可以工作。
 

@@ -11,7 +11,9 @@ from unittest.mock import patch
 
 from backend.utils.paths import (
     get_bundled_config_path,
+    get_data_directory,
     get_frontend_dist_directory,
+    get_logs_directory,
     get_project_root,
     get_resource_root,
     get_runtime_config_path,
@@ -24,8 +26,8 @@ class RuntimePathTests(unittest.TestCase):
     ) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            executable = root / "ColorVision" / "ColorVision.exe"
-            resources = root / "_internal"
+            executable = root / "ColorVision-v1.5.0-win-x64.exe"
+            resources = root / "temp" / "_MEI123456"
 
             with (
                 patch.object(sys, "frozen", True, create=True),
@@ -51,6 +53,14 @@ class RuntimePathTests(unittest.TestCase):
                 self.assertEqual(
                     get_frontend_dist_directory(),
                     expected_resources / "frontend" / "dist",
+                )
+                self.assertEqual(
+                    get_data_directory(),
+                    expected_root / "data",
+                )
+                self.assertEqual(
+                    get_logs_directory(),
+                    expected_root / "data" / "logs",
                 )
 
 
